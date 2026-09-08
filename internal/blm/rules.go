@@ -166,13 +166,13 @@ func SplitBlocks(markdown string, lineOffset int, source, sourceAbs string) []Ru
 		line++
 		if strings.HasPrefix(l, "# ") {
 			flush()
-			topic = strings.TrimSpace(l[2:])
+			topic = strings.TrimSpace(conflictTagRe.ReplaceAllString(l[2:], ""))
 			continue
 		}
 		if strings.HasPrefix(l, "## ") {
 			flush()
 			r, ra, rs := ref(line)
-			cur = &RuleBlock{Topic: topic, Heading: strings.TrimSpace(l[3:]), Text: l + "\n", Line: line, Ref: r, RefAbs: ra, RefShort: rs}
+			cur = &RuleBlock{Topic: topic, Heading: strings.TrimSpace(conflictTagRe.ReplaceAllString(l[3:], "")), Text: l + "\n", Line: line, Ref: r, RefAbs: ra, RefShort: rs}
 			continue
 		}
 		if cur == nil {

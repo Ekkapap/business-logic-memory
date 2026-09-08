@@ -20,10 +20,10 @@ func TestConflictWorkflow(t *testing.T) {
 		t.Fatalf("open: %v %+v", err, reports)
 	}
 	d, _ := s.Get("blm")
-	if !strings.Contains(d.Content, "# Authentication [Conflict: #1](<conflicts/[wait] line-login-20") || !strings.Contains(d.Content, "## LINE Login [Conflict: #1](<conflicts/") {
+	if !strings.Contains(d.Content, "# Authentication [Conflict: [#1](<conflicts/[wait] line-login-20") || !strings.Contains(d.Content, "## LINE Login [Conflict: [#1](<conflicts/") {
 		t.Fatalf("main and sub topic must be tagged: %q", d.Content)
 	}
-	if r := s.Rules("", "agent"); len(r.Conflicts) != 1 {
+	if r := s.Rules("", "agent"); len(r.Conflicts) != 1 || r.Blocks[len(r.Blocks)-1].Heading != "LINE Login" || r.Blocks[len(r.Blocks)-1].Topic != "Authentication" {
 		t.Fatalf("rules must surface conflicts: %+v", r.Conflicts)
 	}
 	// ยังไม่ติ๊ก → ร่างถูกเขียนด้วยฝั่ง B ชั่วคราว ป้ายค้าง และ pending บอก #1
@@ -31,7 +31,7 @@ func TestConflictWorkflow(t *testing.T) {
 	if err != nil || res["ok"] != false || len(res["pending"].([]string)) != 1 {
 		t.Fatalf("pending expected: %v %v", err, res)
 	}
-	if d, _ := s.Get("blm"); !strings.Contains(d.Content, "[Conflict: #1]") || strings.Contains(d.Content, "<<<<<<<") {
+	if d, _ := s.Get("blm"); !strings.Contains(d.Content, "[Conflict: [#1](<conflicts/") || strings.Contains(d.Content, "<<<<<<<") {
 		t.Fatalf("pending draft must keep the tag and no markers: %q", d.Content)
 	}
 	// เจ้าของแก้ block B แล้วติ๊ก
@@ -84,10 +84,10 @@ func TestConflictOnOtherNoteTagsRules(t *testing.T) {
 		t.Fatalf("open: %v %+v", err, reports)
 	}
 	rules, _ := s.Get("blm")
-	if strings.Count(rules.Content, "[Conflict: #1](<conflicts/") != 2 || !strings.Contains(rules.Content, "# Authentication [Conflict: #1](") || strings.Contains(rules.Content, "# Portal [Conflict") {
+	if strings.Count(rules.Content, "[Conflict: [#1](<conflicts/") != 2 || !strings.Contains(rules.Content, "# Authentication [Conflict: [#1](<") || strings.Contains(rules.Content, "# Portal [Conflict") {
 		t.Fatalf("blm.md must be tagged at Authentication › LINE Login only: %q", rules.Content)
 	}
-	if d, _ := s.Get("line-login"); !strings.Contains(d.Content, "## Flow [Conflict: #1](<conflicts/") || strings.Contains(d.Content, "# LINE Login note [Conflict") {
+	if d, _ := s.Get("line-login"); !strings.Contains(d.Content, "## Flow [Conflict: [#1](<conflicts/") || strings.Contains(d.Content, "# LINE Login note [Conflict") {
 		t.Fatalf("the note must be tagged at the heading of the clashing region: %q", d.Content)
 	}
 	if reports[0].NoteHeading != "## Flow" {
@@ -105,5 +105,18 @@ func TestConflictOnOtherNoteTagsRules(t *testing.T) {
 	}
 	if d, _ := s.Get("line-login"); !strings.Contains(d.Content, "- step b (cloud)") || strings.Contains(d.Content, "[Conflict") {
 		t.Fatalf("A chosen: %q", d.Content)
+	}
+}
+
+func TestConflictTagRegexCoversAllForms(t *testing.T) {
+	for _, in := range []string{
+		"## X [Conflict: #1, #2]",
+		"## X [Conflict: #1](conflicts/a.md)",
+		"## X [Conflict: [#1](<conflicts/[wait] a b.md>), [#2](<conflicts/[wait] c.md>)]",
+		"## X [Conflict: [#1](<conflicts/[wait] a.md>)] [Conflict: #3]",
+	} {
+		if got := conflictTagRe.ReplaceAllString(in, ""); got != "## X" {
+			t.Fatalf("%q → %q", in, got)
+		}
 	}
 }

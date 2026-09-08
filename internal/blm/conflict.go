@@ -37,7 +37,8 @@ func (s *Store) conflictsDir() string { return filepath.Join(s.Dir, "conflicts")
 var (
 	conflictFileRe = regexp.MustCompile(`^\[(wait|done)\] (.+)\.md$`)
 	// ป้ายเป็นลิงก์คลิกได้ไปที่รายงาน (เจ้าของ 2026-09-09: "#1 คลิกไม่ได้") · regex ครอบทั้งรูปเก่า [Conflict: #1, #2] และรูปลิงก์ ติดกันหลายอัน
-	conflictTagRe = regexp.MustCompile(`(\s*\[Conflict: [^\]]*\](\(<[^>]*>\)|\([^)]*\))?)+`)
+	// รูปที่ต้องจับ: `[Conflict: #1, #2]` (เก่า) · `[Conflict: #1](url)` (เก่า) · `[Conflict: [#1](<url>), [#2](<url>)]` (ปัจจุบัน: เลขแต่ละตัวเป็นลิงก์ของตัวเอง วงเล็บนอกเห็นบนหน้าจอ)
+	conflictTagRe = regexp.MustCompile(`(\s*\[Conflict: (?:\[#\d+\](?:\(<[^>]*>\)|\([^)]*\))(?:, )?|[^\]])*\](?:\(<[^>]*>\)|\([^)]*\))?)+`)
 	checkedRe     = regexp.MustCompile(`(?m)^- \[[xX]\] `)
 )
 
@@ -323,10 +324,10 @@ cloudUpdatedAt: %s
 	return reports, nil
 }
 
-// tagFor = `[Conflict: #n](<conflicts/[wait] report.md>)` ลิงก์ relative จากโน้ตใน store (blm.md และโน้ตอื่นอยู่โฟลเดอร์เดียวกัน)
+// tagFor = ลิงก์ของเลขเดียว `[#n](<conflicts/[wait] report.md>)` relative จากโน้ตใน store · ป้ายเต็ม `[Conflict: [#1](…), [#2](…)]` (เจ้าของ 2026-09-09: แต่ละเลขคลิกแยก วงเล็บต้องเห็น)
 func tagFor(id int, reportPath string) string {
 	// ปลายทางในวงเล็บแหลม (CommonMark) ใส่ช่องว่าง/วงเล็บเหลี่ยมได้ตรง ๆ — percent-encoding เปิดไม่ติดใน AgentsRoom (ทดสอบ 2026-09-09)
-	return "[Conflict: #" + strconv.Itoa(id) + "](<conflicts/" + filepath.Base(reportPath) + ">)"
+	return "[#" + strconv.Itoa(id) + "](<conflicts/" + filepath.Base(reportPath) + ">)"
 }
 
 // tagLine ติดป้ายที่บรรทัดหัวข้อที่ตรงกับ head (เทียบหลังตัดป้ายเดิม) — ใช้กับหัวข้อในโน้ตที่ชน
@@ -337,7 +338,7 @@ func tagLine(content, head string, ids []string) string {
 	lines := strings.Split(content, "\n")
 	for i, l := range lines {
 		if conflictTagRe.ReplaceAllString(l, "") == head {
-			lines[i] = conflictTagRe.ReplaceAllString(l, "") + " " + strings.Join(ids, " ")
+			lines[i] = conflictTagRe.ReplaceAllString(l, "") + " [Conflict: " + strings.Join(ids, ", ") + "]"
 		}
 	}
 	return strings.Join(lines, "\n")
@@ -381,7 +382,7 @@ func tagHeading(content, topic, heading string, ids []string) string {
 	lines := strings.Split(content, "\n")
 	tag := ""
 	if len(ids) > 0 {
-		tag = " " + strings.Join(ids, " ")
+		tag = " [Conflict: " + strings.Join(ids, ", ") + "]"
 	}
 	inTopic := false
 	for i, l := range lines {
