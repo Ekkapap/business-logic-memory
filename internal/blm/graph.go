@@ -40,6 +40,9 @@ type Graph struct {
 	Hubs     []GraphNode    `json:"hubs"`     // in-degree สูงสุด = โมดูลแกน
 	Clusters []GraphCluster `json:"clusters"` // ต่อโฟลเดอร์ชั้นสอง (src/lib, src/features/X …)
 	Unlinked int            `json:"unlinked"`
+	// Engine = "ast-grep" (tree-sitter จริง มี call graph) หรือ "regex" (โหมดหยาบ ไม่มี tree-sitter บนเครื่อง)
+	Engine string `json:"engine"`
+	Calls  int    `json:"callEdges"`
 }
 
 type GraphCluster struct {
@@ -76,6 +79,7 @@ func (s *Store) BuildGraph(sub string) (Graph, error) {
 	}
 	nodes := map[string]*GraphNode{}
 	var files []string
+	astBin := AstGrepBin()
 	_ = filepath.WalkDir(start, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
@@ -113,6 +117,10 @@ func (s *Store) BuildGraph(sub string) (Graph, error) {
 	})
 	sort.Strings(files)
 	edgeSet := map[string]GraphEdge{}
+	var facts map[string]*AstFacts
+	if astBin != "" {
+		facts = RunAstGrep(astBin, root, files)
+	}
 	for _, rel := range files {
 		raw, err := os.ReadFile(filepath.Join(root, rel))
 		if err != nil {
@@ -122,31 +130,57 @@ func (s *Store) BuildGraph(sub string) (Graph, error) {
 		n := nodes[rel]
 		var targets []string
 		kind := "import"
+		if f := facts[rel]; f != nil && n.Lang != "md" {
+			// AST mode: symbol + import จาก tree-sitter · Go import ยังใช้ regex เพราะ pattern ของ import block ไม่คงที่
+			n.Symbols = uniq(f.Defs)
+			for _, spec := range f.Imports {
+				var t string
+				switch n.Lang {
+				case "ts", "js":
+					t = resolveTS(root, rel, spec, aliases, nodes)
+				case "py":
+					t = resolvePy(rel, spec, nodes)
+				}
+				if t != "" {
+					targets = append(targets, t)
+				}
+			}
+			if n.Lang == "go" {
+				for _, m := range reGoImport.FindAllStringSubmatch(src, -1) {
+					if t := resolveGo(rel, m[1], goMods, nodes); t != "" {
+						targets = append(targets, t)
+					}
+				}
+			}
+		} else {
+			switch n.Lang {
+			case "ts", "js":
+				n.Symbols = uniq(matchAll(reTSSym, src))
+				for _, m := range reTSImport.FindAllStringSubmatch(src, -1) {
+					spec := firstNonEmpty(m[1:])
+					if t := resolveTS(root, rel, spec, aliases, nodes); t != "" {
+						targets = append(targets, t)
+					}
+				}
+			case "go":
+				n.Symbols = uniq(matchAll(reGoSym, src))
+				for _, m := range reGoImport.FindAllStringSubmatch(src, -1) {
+					if t := resolveGo(rel, m[1], goMods, nodes); t != "" {
+						targets = append(targets, t)
+					}
+				}
+			case "py":
+				n.Symbols = uniq(matchAll(rePySym, src))
+				for _, m := range rePyImport.FindAllStringSubmatch(src, -1) {
+					if t := resolvePy(rel, firstNonEmpty(m[1:]), nodes); t != "" {
+						targets = append(targets, t)
+					}
+				}
+			case "php", "rb", "rs", "jvm":
+				n.Symbols = uniq(matchAll(rePHPSym, src))
+			}
+		}
 		switch n.Lang {
-		case "ts", "js":
-			n.Symbols = uniq(matchAll(reTSSym, src))
-			for _, m := range reTSImport.FindAllStringSubmatch(src, -1) {
-				spec := firstNonEmpty(m[1:])
-				if t := resolveTS(root, rel, spec, aliases, nodes); t != "" {
-					targets = append(targets, t)
-				}
-			}
-		case "go":
-			n.Symbols = uniq(matchAll(reGoSym, src))
-			for _, m := range reGoImport.FindAllStringSubmatch(src, -1) {
-				if t := resolveGo(rel, m[1], goMods, nodes); t != "" {
-					targets = append(targets, t)
-				}
-			}
-		case "py":
-			n.Symbols = uniq(matchAll(rePySym, src))
-			for _, m := range rePyImport.FindAllStringSubmatch(src, -1) {
-				if t := resolvePy(rel, firstNonEmpty(m[1:]), nodes); t != "" {
-					targets = append(targets, t)
-				}
-			}
-		case "php", "rb", "rs", "jvm":
-			n.Symbols = uniq(matchAll(rePHPSym, src))
 		case "md":
 			kind = "link"
 			heads := matchAll(reMDHead, src)
@@ -172,7 +206,40 @@ func (s *Store) BuildGraph(sub string) (Graph, error) {
 			}
 		}
 	}
-	g := Graph{Root: root, BuiltAt: time.Now().UTC().Format(time.RFC3339), Files: len(files)}
+	// call graph (AST เท่านั้น): ชื่อที่ถูกเรียกตรงกับ definition ในไฟล์อื่น → edge "call" (ชื่อที่นิยามซ้ำหลายไฟล์ข้าม เพราะชี้ไม่ได้ว่าตัวไหน)
+	callEdges := 0
+	if facts != nil {
+		defOwner := map[string]string{}
+		ambiguous := map[string]bool{}
+		for rel, f := range facts {
+			for _, d := range f.Defs {
+				if o, ok := defOwner[d]; ok && o != rel {
+					ambiguous[d] = true
+				}
+				defOwner[d] = rel
+			}
+		}
+		for rel, f := range facts {
+			for _, c := range f.Calls {
+				owner, ok := defOwner[c]
+				if !ok || ambiguous[c] || owner == rel || nodes[owner] == nil || nodes[rel] == nil {
+					continue
+				}
+				k := rel + "->" + owner
+				if _, dup := edgeSet[k]; dup {
+					continue
+				}
+				edgeSet[k] = GraphEdge{From: rel, To: owner, Kind: "call"}
+				nodes[rel].Out++
+				nodes[owner].In++
+				callEdges++
+			}
+		}
+	}
+	g := Graph{Root: root, BuiltAt: time.Now().UTC().Format(time.RFC3339), Files: len(files), Engine: "regex", Calls: callEdges}
+	if astBin != "" {
+		g.Engine = "ast-grep"
+	}
 	for _, rel := range files {
 		g.Nodes = append(g.Nodes, *nodes[rel])
 		if nodes[rel].In == 0 && nodes[rel].Out == 0 {
@@ -479,6 +546,13 @@ func resolveMD(from, target string, nodes map[string]*GraphNode) string {
 	return ""
 }
 
+func engineLabel(g Graph) string {
+	if g.Engine == "ast-grep" {
+		return Green("ast-grep (tree-sitter)") + "  imports + definitions + cross-file calls"
+	}
+	return Red("regex (coarse)") + "  imports only — install tree-sitter for real AST: blm tools install tree-sitter"
+}
+
 // ClustersHead ตัดรายการ cluster (ให้ response ไม่บวม)
 func ClustersHead(cs []GraphCluster, n int) []GraphCluster { return head(cs, n) }
 
@@ -488,7 +562,8 @@ func RenderGraph(g Graph) string {
 	b.WriteString(Title("blm graph — "+g.Root) + "\n\n")
 	b.WriteString(KV([][2]string{
 		{"Built", shortTime(g.BuiltAt)},
-		{"Files", fmt.Sprintf("%d source/doc files · %d edges · %d unlinked", g.Files, len(g.Edges), g.Unlinked)},
+		{"Engine", engineLabel(g)},
+		{"Files", fmt.Sprintf("%d source/doc files · %d edges (%d calls) · %d unlinked", g.Files, len(g.Edges), g.Calls, g.Unlinked)},
 	}) + "\n")
 	b.WriteString(Section("Hubs  (most imported → core modules)") + "\n")
 	var rows [][]string

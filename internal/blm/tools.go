@@ -25,12 +25,14 @@ func Tools(root string, c Config, action, tool string, docker bool, out io.Write
 	switch action {
 	case "", "help":
 		return strings.Join([]string{
-			"blm tools <action> [--docker] [socraticode|obsidian|graphify]",
+			"blm tools <action> [--docker] [socraticode|obsidian|graphify|tree-sitter|embedding]",
 			"  status                    state of the configured tools (or the one named)",
 			"  get <tool>                what install/start/stop will run for it",
 			"  install [--docker] <tool> check first, then install what is missing",
 			"                            socraticode native = Qdrant + Ollama (mac: brew · linux: release binary + ollama.com installer · windows: docker only)",
 			"                            socraticode --docker = Docker CLI (installed if missing) + images; SocratiCode manages the containers",
+			"                            tree-sitter = ast-grep (tree-sitter engine) for blm_graph AST mode when no SocratiCode/graphify/Obsidian",
+			"                            embedding = Ollama + nomic-embed-text for meaning (native, or --docker) — or let the agent do it",
 			"  start|stop|restart [--docker] <tool>",
 			"  gen-graph                 graphify: how to build the graph (the build itself runs as /graphify inside Claude Code)",
 		}, "\n"), nil
@@ -43,15 +45,17 @@ func Tools(root string, c Config, action, tool string, docker bool, out io.Write
 		}
 		rows := ToolRows(tools)
 		if len(rows) == 0 {
-			return "no tools configured (blm init … --tools socraticode,obsidian,graphify)", nil
+			return "no tools configured (blm init … --tools socraticode,obsidian,graphify,tree-sitter,embedding)", nil
 		}
 		return Table([]string{"Tool", "State", "Detail"}, rows), nil
 	}
 	if tool == "" {
 		return "", fmt.Errorf("tool required: socraticode | obsidian | graphify")
 	}
-	if tool != "socraticode" && tool != "obsidian" && tool != "graphify" {
-		return "", fmt.Errorf("unknown tool %q (socraticode | obsidian | graphify)", tool)
+	switch tool {
+	case "socraticode", "obsidian", "graphify", "tree-sitter", "embedding":
+	default:
+		return "", fmt.Errorf("unknown tool %q (socraticode | obsidian | graphify | tree-sitter | embedding)", tool)
 	}
 	mode := ""
 	if docker {

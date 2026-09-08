@@ -180,6 +180,47 @@ install_obsidian() {
 start_obsidian() { case "$OS" in Darwin) open -a Obsidian "$PWD";; *) (obsidian "obsidian://open?path=$PWD" >/dev/null 2>&1 &) || flatpak run md.obsidian.Obsidian &;; esac; }
 stop_obsidian()  { case "$OS" in Darwin) osascript -e 'quit app "Obsidian"';; *) pkill -f -i obsidian || true;; esac; }
 
+# ---- tree-sitter (engine = ast-grep, a single Rust binary built on tree-sitter; brew/npm/cargo) ----
+install_tree_sitter() {
+  if has ast-grep || has sg; then say "tree-sitter: ast-grep already installed ($(command -v ast-grep || command -v sg))"; return 0; fi
+  case "$OS" in
+    Darwin) need_brew; say "tree-sitter: installing ast-grep (brew)"; brew install ast-grep;;
+    Linux)
+      if has cargo; then cargo install ast-grep --locked
+      elif has npm; then npm install -g @ast-grep/cli
+      else
+        say "tree-sitter: downloading ast-grep release binary"
+        case "$ARCH" in x86_64|amd64) T=x86_64-unknown-linux-gnu;; aarch64|arm64) T=aarch64-unknown-linux-gnu;; *) die "no ast-grep build for $ARCH";; esac
+        URL=$(curl -fsSL https://api.github.com/repos/ast-grep/ast-grep/releases/latest | grep browser_download_url | grep "$T" | grep -v '\.sha' | head -1 | cut -d'"' -f4)
+        [ -n "$URL" ] || die "could not resolve ast-grep download URL — install with: cargo install ast-grep"
+        mkdir -p "$HOME/.local/bin"; curl -fsSL "$URL" | tar -xz -C "$HOME/.local/bin" && chmod +x "$HOME/.local/bin/ast-grep" "$HOME/.local/bin/sg" 2>/dev/null || true
+      fi;;
+    *) die "unsupported OS $OS";;
+  esac
+  has ast-grep || has sg || die "ast-grep not on PATH after install"
+  say "tree-sitter: ready ($(ast-grep --version 2>/dev/null || sg --version))"
+}
+
+# ---- embedding (meaning): Ollama + nomic-embed-text — native by default, --docker = container -------------
+install_embedding() {
+  if [ "$MODE" = docker ]; then
+    ensure_docker || exit 1
+    docker ps -a --format '{{.Names}}' | grep -qx blm-ollama || docker run -d --name blm-ollama -p 11434:11434 -v blm_ollama:/root/.ollama --restart unless-stopped ollama/ollama:latest
+    docker start blm-ollama >/dev/null 2>&1 || true
+    wait_port http://127.0.0.1:11434/api/tags ollama || exit 1
+    docker exec blm-ollama ollama pull nomic-embed-text
+    say "embedding: ollama in docker (blm-ollama :11434) + nomic-embed-text"
+  else
+    install_ollama; start_ollama
+    if ollama list 2>/dev/null | grep -q nomic-embed-text; then say "embedding: model nomic-embed-text present"
+    else say "embedding: pulling nomic-embed-text"; ollama pull nomic-embed-text; fi
+    say "embedding: native ollama :11434 + nomic-embed-text"
+  fi
+  say "ENV BLM_EMBEDDING_URL=http://127.0.0.1:11434"
+}
+start_embedding() { if [ "$MODE" = docker ] || docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx blm-ollama; then docker start blm-ollama; else start_ollama; fi; }
+stop_embedding()  { if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx blm-ollama; then docker stop blm-ollama; else stop_ollama; fi; }
+
 # ---- graphify -----------------------------------------------------------------
 install_graphify() {
   if ! has graphify; then
@@ -198,5 +239,9 @@ case "$ACTION:$TOOL" in
   start:obsidian)      start_obsidian;;
   stop:obsidian)       stop_obsidian;;
   install:graphify)    install_graphify;;
-  *) die "usage: tools.sh <install|start|stop> <socraticode|obsidian|graphify> [--docker]";;
+  install:tree-sitter) install_tree_sitter;;
+  install:embedding)   install_embedding;;
+  start:embedding)     start_embedding;;
+  stop:embedding)      stop_embedding;;
+  *) die "usage: tools.sh <install|start|stop> <socraticode|obsidian|graphify|tree-sitter|embedding> [--docker]";;
 esac

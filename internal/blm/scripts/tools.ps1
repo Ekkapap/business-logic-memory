@@ -48,5 +48,26 @@ switch ("$Action`:$Tool") {
     else { Write-Host "pipx/pip not found — install Python 3 first"; exit 1 }
     graphify install --platform claude
   }
-  default { Write-Host "usage: tools.ps1 <install|start|stop> <socraticode|obsidian|graphify> [--docker]"; exit 1 }
+  "install:tree-sitter" {
+    if ((Has ast-grep) -or (Has sg)) { Write-Host "tree-sitter: ast-grep already installed" }
+    elseif (Has cargo) { cargo install ast-grep --locked }
+    elseif (Has npm) { npm install -g @ast-grep/cli }
+    elseif (Has winget) { winget install -e --id ast-grep.ast-grep --accept-source-agreements --accept-package-agreements }
+    else { Write-Host "install cargo, npm or winget first"; exit 1 }
+  }
+  "install:embedding" {
+    if ($Mode -eq "--docker") {
+      Ensure-Docker
+      if (-not (docker ps -a --format '{{.Names}}' | Select-String -Quiet '^blm-ollama$')) { docker run -d --name blm-ollama -p 11434:11434 -v blm_ollama:/root/.ollama --restart unless-stopped ollama/ollama:latest }
+      docker start blm-ollama *> $null
+      docker exec blm-ollama ollama pull nomic-embed-text
+    } else {
+      if (-not (Has ollama)) { winget install -e --id Ollama.Ollama --accept-source-agreements --accept-package-agreements }
+      ollama pull nomic-embed-text
+    }
+    Write-Host "ENV BLM_EMBEDDING_URL=http://127.0.0.1:11434"
+  }
+  "start:embedding" { docker start blm-ollama }
+  "stop:embedding"  { docker stop blm-ollama }
+  default { Write-Host "usage: tools.ps1 <install|start|stop> <socraticode|obsidian|graphify|tree-sitter|embedding> [--docker]"; exit 1 }
 }

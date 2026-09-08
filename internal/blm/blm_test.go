@@ -151,7 +151,13 @@ func TestReportAndStatus(t *testing.T) {
 	}
 	c.Tools = []string{"socraticode", "obsidian", "graphify"}
 	st := s.Status(c)
-	if st.Reports != 1 || st.Gain.Checks != 1 || len(st.Tools) != 3 || !st.Ready || !st.Tools[0].Applied {
+	applied := 0
+	for _, t := range st.Tools {
+		if t.Applied {
+			applied++
+		}
+	}
+	if st.Reports != 1 || st.Gain.Checks != 1 || applied != 3 || !st.Ready {
 		t.Fatalf("status %+v", st)
 	}
 	if out := RenderStatus(st); !strings.Contains(out, "READY") || !strings.Contains(out, "Tools") || strings.Contains(out, "**") {

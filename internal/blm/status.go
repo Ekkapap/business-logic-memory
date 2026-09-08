@@ -194,6 +194,36 @@ func DetectTools(root string, c Config) []ToolStatus {
 		gr.Used = true
 	}
 	out = append(out, gr)
+
+	// tree-sitter (ast-grep): เครื่องยนต์ AST ของ blm_graph เมื่อไม่มีสามตัวบน · ใช้ในโปรเจ็ค = graph.json ถูกสร้างด้วย ast
+	ts := ToolStatus{Name: "tree-sitter", Detail: map[string]string{}}
+	if p := AstGrepBin(); p != "" {
+		ts.Installed = true
+		ts.Detail["bin"] = p
+	} else {
+		ts.Hint = "blm tools install tree-sitter"
+	}
+	if raw, err := os.ReadFile(filepath.Join(root, c.Store, "graph.json")); err == nil && strings.Contains(string(raw), `"engine":"ast-grep"`) {
+		ts.Used = true
+		ts.Detail["graph"] = c.Store + "/graph.json (ast)"
+	}
+	out = append(out, ts)
+
+	// embedding: Ollama + nomic-embed-text (native หรือ docker blm-ollama) — "ความหมาย" เมื่อไม่มี SocratiCode
+	em := ToolStatus{Name: "embedding", Detail: map[string]string{}}
+	if httpUp("http://127.0.0.1:11434/api/tags") {
+		em.Installed = true
+		r := true
+		em.Running = &r
+		em.Detail["ollama"] = "127.0.0.1:11434"
+	} else if _, err := exec.LookPath("ollama"); err == nil {
+		em.Installed = true
+		r := false
+		em.Running = &r
+	} else {
+		em.Hint = "blm tools install embedding  (or let the agent infer meaning itself)"
+	}
+	out = append(out, em)
 	return out
 }
 
