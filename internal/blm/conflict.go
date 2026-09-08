@@ -507,7 +507,7 @@ func (s *Store) ResolveConflicts(name string) (map[string]any, error) {
 		}
 	}
 	if len(mine) == 0 {
-		return nil, fmt.Errorf("resolve %q: no open conflicts", name)
+		return nil, fmt.Errorf("resolve %q: no open conflicts — %s", name, s.openNotesHint())
 	}
 	mergedRaw, err := os.ReadFile(filepath.Join(s.conflictsDir(), name+".merged.md"))
 	if err != nil {
@@ -700,9 +700,25 @@ func (s *Store) Keep(name, keep string) error {
 		n++
 	}
 	if n == 0 {
-		return fmt.Errorf("keep: no open conflicts for %q", name)
+		return fmt.Errorf("keep: no open conflicts for note %q — %s", name, s.openNotesHint())
 	}
 	return nil
+}
+
+// openNotesHint ชื่อโน้ตที่มีรายงานค้าง สำหรับข้อความ error (เจ้าของพิมพ์ข้อความแทนชื่อโน้ต 2026-09-09)
+func (s *Store) openNotesHint() string {
+	seen := map[string]bool{}
+	var names []string
+	for _, c := range s.ListConflicts() {
+		if c.Status == "wait" && !seen[c.Draft] {
+			seen[c.Draft] = true
+			names = append(names, c.Draft)
+		}
+	}
+	if len(names) == 0 {
+		return "nothing is waiting (blm conflicts)"
+	}
+	return "the argument is the note name; waiting: " + strings.Join(names, ", ")
 }
 
 var checkboxRe = regexp.MustCompile(`- \[[ xX]\]`)
