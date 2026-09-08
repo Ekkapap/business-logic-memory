@@ -3,6 +3,7 @@
 #   ($env:BLM_INIT_ARGS = "--agentsroom" ก่อนรัน เพื่อส่ง option ให้ blm init)
 $ErrorActionPreference = "Stop"
 $repo = "Ekkapap/business-logic-memory"
+Write-Host "blm: run this inside the project you want blm to remember (current: $PWD)"
 $arch = if ([Environment]::Is64BitOperatingSystem) { "amd64" } else { "386" }
 $binDir = if ($env:BLM_BIN_DIR) { $env:BLM_BIN_DIR } else { Join-Path $env:LOCALAPPDATA "blm" }
 New-Item -ItemType Directory -Force -Path $binDir | Out-Null

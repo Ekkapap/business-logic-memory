@@ -33,6 +33,10 @@ type InitOptions struct {
 	Tools []string
 	// Docker = socraticode แบบ Docker (Windows บังคับ)
 	Docker bool
+	// Force = ข้ามการตรวจว่า root เป็นโปรเจ็คจริง
+	Force bool
+	// BackendSet = ผู้ใช้ระบุ backend เอง · false + มี config อยู่แล้ว = ใช้ของเดิม (รัน install ซ้ำต้องไม่เปลี่ยน backend เงียบ ๆ)
+	BackendSet bool
 	// Out สำหรับ stream output ของ script ติดตั้ง (nil = ไม่พิมพ์)
 	Out io.Writer
 	// Run แยกไว้ให้ test แทนได้
@@ -52,16 +56,18 @@ func ParseInit(argv []string) (InitOptions, error) {
 	for i := 0; i < len(argv); i++ {
 		switch a := argv[i]; a {
 		case "--agentsroom":
-			o.Backend = blm.BackendAgentsRoom
+			o.Backend, o.BackendSet = blm.BackendAgentsRoom, true
 		case "--obsidian":
-			o.Backend = blm.BackendObsidian
+			o.Backend, o.BackendSet = blm.BackendObsidian, true
 		case "--dir":
 			o.Store = next(&i)
 		case "--backend":
 			o.CustomCLI = next(&i)
-			o.Backend = blm.BackendCustom
+			o.Backend, o.BackendSet = blm.BackendCustom, true
 		case "--docker":
 			o.Docker = true
+		case "--force":
+			o.Force = true
 		case "--no-plugin":
 			o.Plugin = false
 		case "--sandbox":
@@ -146,11 +152,59 @@ func mergeList(cur []string, add ...string) []any {
 	return out
 }
 
+// projectMarkers ร่องรอยว่าโฟลเดอร์นี้คือ root ของโปรเจ็ค — init ต้องรันในโปรเจ็ค ไม่ใช่ $HOME หรือโฟลเดอร์สุ่ม (เจ้าของ 2026-09-09)
+var projectMarkers = []string{".git", ".agentsroom", ".obsidian", "CLAUDE.md", "package.json", "go.mod", "pyproject.toml", "Cargo.toml", "pom.xml", "composer.json", "Gemfile", "*.sln"}
+
+func looksLikeProject(root string) bool {
+	for _, m := range projectMarkers {
+		if strings.Contains(m, "*") {
+			if hits, _ := filepath.Glob(filepath.Join(root, m)); len(hits) > 0 {
+				return true
+			}
+			continue
+		}
+		if exists(filepath.Join(root, m)) {
+			return true
+		}
+	}
+	return false
+}
+
 func Init(o InitOptions) []string {
 	var log []string
+	if !o.Force && !looksLikeProject(o.Root) {
+		return []string{
+			"stop     " + o.Root + " does not look like a project root (no .git, .agentsroom, package.json, go.mod, CLAUDE.md, …)",
+			"         blm must be initialised inside the project it will remember: cd <your-project> && blm init …",
+			"         to initialise here anyway: blm init --force",
+		}
+	}
 	c := blm.Config{Backend: blm.BackendCustom, Store: o.Store}
 	if o.Backend != blm.BackendCustom {
 		c = blm.Presets[o.Backend]
+		if o.Store != "" {
+			c.Store = o.Store
+		}
+	}
+	if !o.BackendSet {
+		switch {
+		case exists(filepath.Join(o.Root, blm.ConfigFile)):
+			existing := blm.Load(o.Root)
+			c = existing // รันซ้ำโดยไม่ระบุ backend = คงของเดิมทั้ง backend/store/mirror/tools
+			if o.Tools == nil {
+				o.Tools = existing.Tools
+			}
+			log = append(log, "config   existing "+blm.ConfigFile+" kept (backend "+string(c.Backend)+") — pass --agentsroom/--obsidian/--dir to change")
+		// ไม่ระบุ backend = ดูโปรเจ็คก่อน (เจ้าของ 2026-09-09): มี AgentsRoom → agentsroom · เป็น vault → obsidian · ไม่งั้น none
+		case exists(filepath.Join(o.Root, blm.Presets[blm.BackendAgentsRoom].Mirror)) || exists(filepath.Join(o.Root, ".agentsroom")):
+			c = blm.Presets[blm.BackendAgentsRoom]
+			log = append(log, "backend  agentsroom auto-detected (.agentsroom/ found) — pass --obsidian or --dir to override")
+		case exists(filepath.Join(o.Root, ".obsidian")):
+			c = blm.Presets[blm.BackendObsidian]
+			log = append(log, "backend  obsidian auto-detected (.obsidian/ found)")
+		default:
+			log = append(log, "backend  none (no .agentsroom/ or .obsidian/ found) — files in "+c.Store+" are the truth")
+		}
 		if o.Store != "" {
 			c.Store = o.Store
 		}
@@ -288,6 +342,8 @@ func Init(o InitOptions) []string {
 	}
 	return append(log, "next     open Claude Code in the project -> /reload-plugins -> /blm_init to analyse the project and draft blm.md · check: blm status")
 }
+
+func exists(p string) bool { _, err := os.Stat(p); return err == nil }
 
 func contains(list []string, s string) bool {
 	for _, x := range list {

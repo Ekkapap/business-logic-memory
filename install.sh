@@ -4,6 +4,7 @@
 # ดาวน์โหลด binary จาก GitHub Releases → ~/.local/bin/blm → เติม PATH → blm init <args ที่ส่งมา>
 set -e
 REPO="Ekkapap/business-logic-memory"
+echo "blm: run this inside the project you want blm to remember (current: $PWD)"
 OS=$(uname -s | tr '[:upper:]' '[:lower:]'); ARCH=$(uname -m)
 case "$ARCH" in x86_64|amd64) ARCH=amd64;; arm64|aarch64) ARCH=arm64;; *) echo "unsupported arch $ARCH"; exit 1;; esac
 BIN_DIR="${BLM_BIN_DIR:-$HOME/.local/bin}"; mkdir -p "$BIN_DIR"

@@ -18,7 +18,7 @@ import (
 const usage = `blm <command> [args]
 
   init [path] [--agentsroom | --obsidian | --dir <p> --backend <cli>] [--tools a,b] [--docker] [--no-plugin] [--sandbox] [--marketplace <dir|owner/repo>]
-                                  --tools installs the listed tools when missing (--docker = socraticode via Docker)
+                                  run inside the project root · --tools installs the listed tools when missing (--docker = socraticode via Docker) · --force skips the project-root check
   status [--json]                 readiness, paths, rules, temp notes, tools, stats
   report [name] [--json]          latest report
   tools <action> [--docker] [tool] status|get|install|start|stop|restart|gen-graph|help  (socraticode|obsidian|graphify)

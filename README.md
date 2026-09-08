@@ -12,6 +12,8 @@ One binary. Session temp memory for AI agents + a single business-logic source o
 
 ## Install (one line, inside your project)
 
+> Run the install command **from the root of the project** blm should remember (the folder with `.git` / `.agentsroom` / `package.json` …). `blm init` refuses to run elsewhere unless you pass `--force`. Without a backend flag it auto-detects: existing `.claude/blm.json` → kept · `.agentsroom/` → agentsroom · `.obsidian/` → obsidian · otherwise none.
+
 ```sh
 # macOS / Linux
 curl -fsSL https://raw.githubusercontent.com/Ekkapap/business-logic-memory/main/install.sh | sh -s -- --agentsroom
