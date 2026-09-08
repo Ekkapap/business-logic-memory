@@ -1,7 +1,24 @@
 #!/bin/sh
-# สร้าง binary ทุกแพลตฟอร์มลง dist/ แล้ว (ถ้ามี gh) สร้าง GitHub Release:  scripts/release.sh v2.0.0
+# สร้าง binary ทุกแพลตฟอร์มลง dist/ แล้ว (ถ้ามี gh) สร้าง GitHub Release
+#   scripts/release.sh            → เวอร์ชันถัดไปอัตโนมัติ: tag ล่าสุดบน origin (หรือ local) +1 ที่หลัก patch (v2.0.6 → v2.0.7)
+#   scripts/release.sh v2.1.0     → ระบุเอง (ต้องเป็น vX.Y.Z)
 set -e
-VERSION="${1:?usage: scripts/release.sh vX.Y.Z}"
+latest_tag() {
+  # remote ก่อน (release สร้าง tag บน GitHub โดยไม่มี tag local) ไม่ได้ค่อยดู local
+  git ls-remote --tags --refs origin 'v[0-9]*' 2>/dev/null | sed 's#.*/##' | sort -V | tail -1 \
+    || true
+}
+VERSION="${1:-}"
+if [ -z "$VERSION" ] || [ "$VERSION" = auto ]; then
+  LAST=$(latest_tag)
+  [ -n "$LAST" ] || LAST=$(git tag --list 'v[0-9]*' | sort -V | tail -1)
+  [ -n "$LAST" ] || LAST=v0.0.0
+  MAJOR=${LAST#v}; MAJOR=${MAJOR%%.*}
+  MINOR=${LAST#v*.}; MINOR=${MINOR%%.*}
+  PATCH=${LAST##*.}
+  VERSION="v$MAJOR.$MINOR.$((PATCH + 1))"
+  echo "release: last tag $LAST → $VERSION"
+fi
 case "$VERSION" in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo "error: version must look like v2.0.6 (got '$VERSION')"; exit 1;; esac
 LD="-s -w -X github.com/Ekkapap/business-logic-memory/internal/blm.Version=${VERSION#v}"
 rm -rf dist && mkdir -p dist
