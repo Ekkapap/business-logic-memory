@@ -87,8 +87,11 @@ func TestConflictOnOtherNoteTagsRules(t *testing.T) {
 	if strings.Count(rules.Content, "[Conflict: #1]") != 2 || !strings.Contains(rules.Content, "# Authentication [Conflict: #1]") || strings.Contains(rules.Content, "# Portal [Conflict") {
 		t.Fatalf("blm.md must be tagged at Authentication › LINE Login only: %q", rules.Content)
 	}
-	if d, _ := s.Get("line-login"); strings.Contains(d.Content, "[Conflict") {
-		t.Fatalf("the conflicting note itself must not be tagged: %q", d.Content)
+	if d, _ := s.Get("line-login"); !strings.Contains(d.Content, "## Flow [Conflict: #1]") || strings.Contains(d.Content, "# LINE Login note [Conflict") {
+		t.Fatalf("the note must be tagged at the heading of the clashing region: %q", d.Content)
+	}
+	if reports[0].NoteHeading != "## Flow" {
+		t.Fatalf("noteHeading: %+v", reports[0])
 	}
 	file := filepath.Join(root, reports[0].File)
 	raw, _ := os.ReadFile(file)
@@ -100,7 +103,7 @@ func TestConflictOnOtherNoteTagsRules(t *testing.T) {
 	if strings.Contains(rules.Content, "[Conflict") {
 		t.Fatalf("tags must be gone after resolve: %q", rules.Content)
 	}
-	if d, _ := s.Get("line-login"); !strings.Contains(d.Content, "- step b (cloud)") {
+	if d, _ := s.Get("line-login"); !strings.Contains(d.Content, "- step b (cloud)") || strings.Contains(d.Content, "[Conflict") {
 		t.Fatalf("A chosen: %q", d.Content)
 	}
 }

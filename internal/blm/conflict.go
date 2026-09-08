@@ -28,6 +28,8 @@ type ConflictReport struct {
 	Chosen   string `json:"chosen,omitempty"` // A | B | "" (ยังไม่เลือก) | "both" (ติ๊กสองช่อง = ผิด)
 	Created  string `json:"created"`
 	Resolved string `json:"resolved,omitempty"`
+	// NoteHeading หัวข้อในโน้ตที่ชน (บรรทัด # / ## ก่อนบริเวณที่ชน) — ป้ายติดที่นี่ด้วย เพื่อบอกว่าแก้ตรงไหนของโน้ต
+	NoteHeading string `json:"noteHeading,omitempty"`
 }
 
 func (s *Store) conflictsDir() string { return filepath.Join(s.Dir, "conflicts") }
@@ -53,7 +55,7 @@ func (s *Store) ListConflicts() []ConflictReport {
 		}
 		meta, _, body := splitFront(string(raw))
 		id, _ := strconv.Atoi(meta["id"])
-		r := ConflictReport{ID: id, File: s.rel(filepath.Join(s.conflictsDir(), e.Name())), Status: m[1], Draft: meta["draft"], Topic: meta["topic"], Heading: meta["subtopic"], Created: meta["created"], Resolved: meta["resolved"]}
+		r := ConflictReport{ID: id, File: s.rel(filepath.Join(s.conflictsDir(), e.Name())), Status: m[1], Draft: meta["draft"], Topic: meta["topic"], Heading: meta["subtopic"], Created: meta["created"], Resolved: meta["resolved"], NoteHeading: meta["noteHeading"]}
 		r.Chosen = chosenBlock(body)
 		out = append(out, r)
 	}
@@ -207,9 +209,15 @@ func (s *Store) OpenConflict(name, topic, heading, reason string) ([]ConflictRep
 	var ids []string
 	lines := strings.Split(merged, "\n")
 	var out []string
+	lastHead := "" // หัวข้อล่าสุดในโน้ตก่อนถึงบริเวณที่ชน → ป้ายในโน้ตติดที่บรรทัดนี้
+	noteHeads := map[string][]string{}
+	var headOrder []string
 	for i := 0; i < len(lines); i++ {
 		if lines[i] != "<<<<<<< cloud" {
 			out = append(out, lines[i])
+			if strings.HasPrefix(lines[i], "# ") || strings.HasPrefix(lines[i], "## ") {
+				lastHead = conflictTagRe.ReplaceAllString(lines[i], "")
+			}
 			continue
 		}
 		var a, b []string
@@ -224,6 +232,10 @@ func (s *Store) OpenConflict(name, topic, heading, reason string) ([]ConflictRep
 		id := next
 		next++
 		ids = append(ids, "#"+strconv.Itoa(id))
+		if _, ok := noteHeads[lastHead]; !ok {
+			headOrder = append(headOrder, lastHead)
+		}
+		noteHeads[lastHead] = append(noteHeads[lastHead], "#"+strconv.Itoa(id))
 		out = append(out, fmt.Sprintf("<<<<<<< #%d >>>>>>>", id))
 		file := filepath.Join(s.conflictsDir(), fmt.Sprintf("[wait] %s-%s.md", slug(heading), time.Now().Format("20060102150405")))
 		// ส่วนต่างล้วน ๆ ระหว่างสอง block (เจ้าของ 2026-09-09: อ่านสอง block เต็มแล้วบอกไม่ได้ว่าอันไหนถูก) — บรรทัดที่เท่ากันไม่ต้องอ่าน
@@ -249,6 +261,7 @@ draft: %s
 target: %s
 topic: %s
 subtopic: %s
+noteHeading: %s
 status: wait
 created: %s
 cloudUpdatedAt: %s
@@ -284,17 +297,40 @@ cloudUpdatedAt: %s
 
 ### B — ร่างในเครื่อง
 `+"```text\n%s\n```"+`
-`, id, name, draft.Target, topic, heading, now, cloud.UpdatedAt, id, topic, heading, strings.TrimSpace(reason), cloud.UpdatedAt, quote(onlyA), quote(onlyB), name, id, strings.Join(a, "\n"), strings.Join(b, "\n"))
+`, id, name, draft.Target, topic, heading, lastHead, now, cloud.UpdatedAt, id, topic, heading, strings.TrimSpace(reason), cloud.UpdatedAt, quote(onlyA), quote(onlyB), name, id, strings.Join(a, "\n"), strings.Join(b, "\n"))
 		if err := os.WriteFile(file, []byte(body), 0o644); err != nil {
 			return nil, err
 		}
-		reports = append(reports, ConflictReport{ID: id, File: s.rel(file), Status: "wait", Draft: name, Topic: topic, Heading: heading, Created: now})
+		reports = append(reports, ConflictReport{ID: id, File: s.rel(file), Status: "wait", Draft: name, Topic: topic, Heading: heading, Created: now, NoteHeading: lastHead})
 	}
 	// ผล 3-way ที่มี marker เลข id (ใช้ประกอบกลับ) + base เลื่อนไปที่ cloud ปัจจุบันตอน resolve
 	_ = os.WriteFile(filepath.Join(s.conflictsDir(), name+".merged.md"), []byte("cloudUpdatedAt: "+cloud.UpdatedAt+"\n---\n"+strings.Join(out, "\n")), 0o644)
-	// ป้าย [Conflict: #n] ไปอยู่ที่ blm.md ตรง main/sub topic ที่โน้ตนี้เป็นส่วนประกอบ (เจ้าของ 2026-09-09) ไม่ใช่ในโน้ตที่ชน
+	// ป้ายสองที่ (เจ้าของ 2026-09-09): ในโน้ตที่ชน ตรงหัวข้อของบริเวณนั้น (บอกว่าแก้ตรงไหน) และใน blm.md ตรง main/sub topic (บอกว่าชนเรื่องอะไรของ business logic)
+	if name != RulesNote {
+		tagged := conflictTagRe.ReplaceAllString(draft.Content, "")
+		for _, h := range headOrder {
+			tagged = tagLine(tagged, h, noteHeads[h])
+		}
+		if _, err := s.save(Input{Name: name, Content: tagged, HasContent: true}, "conflict-tag"); err != nil {
+			return nil, err
+		}
+	}
 	s.refreshRuleTags()
 	return reports, nil
+}
+
+// tagLine ติดป้ายที่บรรทัดหัวข้อที่ตรงกับ head (เทียบหลังตัดป้ายเดิม) — ใช้กับหัวข้อในโน้ตที่ชน
+func tagLine(content, head string, ids []string) string {
+	if head == "" || len(ids) == 0 {
+		return content
+	}
+	lines := strings.Split(content, "\n")
+	for i, l := range lines {
+		if conflictTagRe.ReplaceAllString(l, "") == head {
+			lines[i] = conflictTagRe.ReplaceAllString(l, "") + " [Conflict: " + strings.Join(ids, ", ") + "]"
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // refreshRuleTags เขียนป้ายใน blm.md ใหม่ทั้งไฟล์จากรายงานที่ยัง wait: ตัดป้ายเก่าทุกอัน แล้วติด `[Conflict: #a, #b]`
@@ -400,7 +436,30 @@ func (s *Store) ResolveConflicts(name string) (map[string]any, error) {
 	}
 	remaining := append(append([]string{}, pending...), both...)
 	sort.Strings(remaining)
-	content = conflictTagRe.ReplaceAllString(content, "") // ป้ายในโน้ตที่ชน (ถ้าเป็น blm.md เอง) เขียนใหม่โดย refreshRuleTags ท้ายสุด
+	content = conflictTagRe.ReplaceAllString(content, "")
+	if name != RulesNote { // ป้ายในโน้ตเหลือเฉพาะรายงานที่ยังไม่จบ · ถ้าโน้ตคือ blm.md เอง refreshRuleTags ท้ายสุดจัดการ
+		byHead := map[string][]string{}
+		var hOrder []string
+		for _, c := range mine {
+			tag := "#" + strconv.Itoa(c.ID)
+			keep := false
+			for _, r := range remaining {
+				if r == tag {
+					keep = true
+				}
+			}
+			if !keep {
+				continue
+			}
+			if _, ok := byHead[c.NoteHeading]; !ok {
+				hOrder = append(hOrder, c.NoteHeading)
+			}
+			byHead[c.NoteHeading] = append(byHead[c.NoteHeading], tag)
+		}
+		for _, h := range hOrder {
+			content = tagLine(content, h, byHead[h])
+		}
+	}
 	draft, err := s.Get(name)
 	if err != nil {
 		return nil, err
