@@ -12,7 +12,7 @@ argument-hint: [หัวข้อหรือคำค้น เช่น "Line
    - PASSED = ข้อ 1 ไม่ขัดกับ block · NOT PASSED = ขัดหรือเข้าใจคนละอย่าง · UNKNOWN = ข้อ 1 ไม่ได้พูดถึง
    แล้วเรียก `blm_report { scope: "$ARGUMENTS", before: <ข้อความข้อ 1>, after: <ข้อสรุป>, rows: [{topic, heading, result, ref: block.refShort}], trigger: "user" }`
    - `after` = "เราเข้าใจตรงกันอยู่ครับ" + สรุปสั้น · หรือรายการ NOT PASSED ทีละข้อ: เดิมคิด / กฎ / งานใน session นี้แตะไหม · ถ้าความเข้าใจของคุณใหม่กว่าไฟล์กฎเพราะเพิ่งได้รับจากเจ้าของใน session นี้ เสนอว่าควรอัปเดตกฎข้อไหน · ใส่ changedSinceLastRead / pendingDrafts ถ้ามี
-   - Ref ใช้ `block.refShort` ตรง ๆ (`blm.md:<line>` คลิกเปิดได้ใน terminal ผ่าน symlink ที่ tool ดูแล) ห้ามพิมพ์ path ยาว ห้ามแต่งเลขบรรทัด
+   - Ref ใช้ `block.refShort` ตรง ๆ (`.agentsroom/blm/blm.md:<line>` path จริง คลิกเปิดได้ใน terminal) ห้ามแต่งเลขบรรทัด
    - **ห้ามจัดคอลัมน์เอง** tool วัดความกว้าง monospace จริง (สระไทยไม่กินช่อง emoji กว้าง 2) และเขียนไฟล์รายงาน+สถิติให้แล้ว
 4. ข้อความสุดท้าย = `terminal` ที่ `blm_report` คืนมา **ทั้งก้อนตามตัวอักษร** ห้ามแก้ช่องว่าง ห้ามสรุปเพิ่ม
 5. ถ้ามี NOT PASSED ที่คุณแก้ความเข้าใจได้เองจากไฟล์กฎ เรียก `blm_stat {event:"fixed", count, query}` · ถ้ามี NOT PASSED ที่งานใน session นี้แตะอยู่ ให้หยุดรอเจ้าของก่อนแก้อะไรต่อ ห้ามแก้โค้ดให้เข้ากับความจำ ห้ามแก้กฎเอง

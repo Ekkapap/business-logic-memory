@@ -83,14 +83,14 @@ func TestRulesFromStoreAndMirror(t *testing.T) {
 	if ruleCount != 2 {
 		t.Fatalf("rule blocks %d", ruleCount)
 	}
-	if res.Blocks[1].RefShort != "blm.md:10" || res.Blocks[1].Topic != "Authentication" {
+	if res.Blocks[1].RefShort != ".claude/blm/blm.md:10" || res.Blocks[1].Topic != "Authentication" {
 		t.Fatalf("ref/topic ผิด (frontmatter 4 บรรทัดต้องนับรวม): %+v", res.Blocks[1])
 	}
 	if q := s.Rules("line login", "agent"); len(q.Blocks) != 1 || q.Blocks[0].Heading != "LINE Login" {
 		t.Fatalf("query: %+v", q.Blocks)
 	}
-	if _, err := os.Lstat(filepath.Join(root, ".claude", "blm.md")); err != nil {
-		t.Fatalf("symlink สั้นต้องถูกสร้าง: %v", err)
+	if _, err := os.Lstat(filepath.Join(root, ".claude", "blm.md")); err == nil {
+		t.Fatal("no short symlink must be created any more")
 	}
 	topics, rulesN := s.TopicCount()
 	if topics != 2 || rulesN != 2 {
@@ -107,8 +107,8 @@ func TestRulesFromStoreAndMirror(t *testing.T) {
 	if r2.Source != ".agentsroom/blm/blm.md" || len(r2.PendingDrafts) != 1 || r2.PendingDrafts[0] != "blm-draft" {
 		t.Fatalf("local copy: %+v", r2)
 	}
-	if link, err := os.Readlink(filepath.Join(root2, ".agentsroom", "blm.md")); err != nil || link != "blm/blm.md" {
-		t.Fatalf("short link must point at the local copy, got %q %v", link, err)
+	if _, err := os.Lstat(filepath.Join(root2, ".agentsroom", "blm.md")); err == nil {
+		t.Fatal("no short symlink must be created any more")
 	}
 	plan := s2.PlanSync(s2.List())
 	if len(plan) != 1 || plan[0].MemorySave.Folder != "global/conventions" || !plan[0].TargetExists || len(plan[0].From) != 1 {

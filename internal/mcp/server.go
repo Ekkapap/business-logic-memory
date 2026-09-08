@@ -48,7 +48,7 @@ var noteProps = map[string]any{
 
 func tools(c blm.Config) []tool {
 	rowSchema := map[string]any{"type": "array", "items": obj(map[string]any{
-		"topic": str(""), "heading": str(""), "result": enum("", "PASSED", "NOT PASSED", "UNKNOWN"), "ref": str("block.refShort e.g. blm.md:29"),
+		"topic": str(""), "heading": str(""), "result": enum("", "PASSED", "NOT PASSED", "UNKNOWN"), "ref": str("block.refShort e.g. .agentsroom/blm/blm.md:29"),
 	}, "topic", "heading", "result", "ref")}
 	all := []tool{
 		{"blm", "Read the project's current business rules (blm.md — the single source of truth, changed only by the owner). No query = whole file · a word/heading = grep, returns the whole block of every matching subtopic with its main topic. Also reports which blocks changed since the last read and whether temp drafts are waiting for confirmation. Call it yourself whenever memory conflicts with code.",

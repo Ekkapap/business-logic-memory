@@ -19,7 +19,7 @@ type RuleBlock struct {
 	Line   int    `json:"line"`
 	Ref    string `json:"ref"`
 	RefAbs string `json:"refAbs"`
-	// RefShort `blm.md:line` — ผ่าน symlink สั้นข้าง store ใช้ต่อท้าย PASSED/NOT PASSED ในรายงาน
+	// RefShort = path จริง relative จาก root (`.agentsroom/blm/blm.md:20`) ใช้ต่อท้าย PASSED/NOT PASSED ในรายงาน · เจ้าของ 2026-09-09: ไม่เอา symlink `.agentsroom/blm.md`
 	RefShort string `json:"refShort"`
 	// Rule = block ที่เป็น "กฎ" จริง (มีบรรทัด memory:/code:) — ตาราง Main Business, วิธีอ่าน, ข้อสงสัย ไม่ใช่กฎ ไม่ต้องตรวจ
 	Rule      bool   `json:"rule"`
@@ -82,7 +82,7 @@ func (s *Store) Rules(query, trigger string) RulesResult {
 		res.Message = "no rules file blm.md yet — run /blm_init to analyse the project and draft it, or if a draft exists in temp have the owner review it and blm_sync first"
 		return res
 	}
-	s.ensureShortLink(path)
+	s.removeShortLink()
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		res.Message = err.Error()
@@ -114,26 +114,12 @@ func (s *Store) Rules(query, trigger string) RulesResult {
 	return res
 }
 
-// ensureShortLink symlink สั้น `<parent ของ store>/blm.md` → ไฟล์กฎจริง ให้รายงานพิมพ์ `blm.md:20`
-// แล้วคลิกเปิดได้ใน terminal ของ AgentsRoom โดยไม่โชว์ path ยาว (เจ้าของทดสอบ 2026-09-08 ว่าหาไฟล์จากชื่อสั้นผ่าน symlink ได้)
-// ชี้ใหม่ทุกครั้งที่อ่าน จึงไม่มีวันชี้ผิดไฟล์ · ระบบไฟล์ที่ไม่ให้ symlink (Windows ไม่มีสิทธิ์) ข้ามเงียบ ๆ รายงานยังใช้ ref เต็มได้
-func (s *Store) ensureShortLink(target string) {
+// removeShortLink ลบ symlink `<parent ของ store>/blm.md` ที่รุ่นก่อนสร้างไว้ (เจ้าของ 2026-09-09: ไม่ต้องการไฟล์นี้โผล่ ใช้ path จริงใน ref แทน)
+func (s *Store) removeShortLink() {
 	link := filepath.Join(filepath.Dir(s.Dir), RulesNote+".md")
-	if filepath.Clean(link) == filepath.Clean(target) {
-		return
+	if fi, err := os.Lstat(link); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		_ = os.Remove(link)
 	}
-	wanted, err := filepath.Rel(filepath.Dir(link), target)
-	if err != nil {
-		return
-	}
-	if cur, err := os.Readlink(link); err == nil && cur == wanted {
-		return
-	}
-	if fi, err := os.Lstat(link); err == nil && fi.Mode()&os.ModeSymlink == 0 {
-		return // มีไฟล์จริงชื่อนี้อยู่ ไม่ทับ
-	}
-	_ = os.Remove(link)
-	_ = os.Symlink(wanted, link)
 }
 
 var (
@@ -149,7 +135,7 @@ func SplitBlocks(markdown string, lineOffset int, source, sourceAbs string) []Ru
 	topic := ""
 	line := lineOffset
 	ref := func(n int) (string, string, string) {
-		return source + ":" + itoa(n), sourceAbs + ":" + itoa(n), RulesNote + ".md:" + itoa(n)
+		return source + ":" + itoa(n), sourceAbs + ":" + itoa(n), source + ":" + itoa(n)
 	}
 	flush := func() {
 		if cur != nil && strings.TrimSpace(cur.Text) != "" {
