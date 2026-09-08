@@ -20,8 +20,8 @@ func TestConflictWorkflow(t *testing.T) {
 		t.Fatalf("open: %v %+v", err, reports)
 	}
 	d, _ := s.Get("blm")
-	if !strings.Contains(d.Content, "# Authentication [Conflict: [#1](<conflicts/[wait] line-login-20") || !strings.Contains(d.Content, "## LINE Login [Conflict: [#1](<conflicts/") {
-		t.Fatalf("main and sub topic must be tagged: %q", d.Content)
+	if !strings.Contains(d.Content, "## LINE Login [Conflict](<conflicts/[wait] line-login-20") || strings.Contains(d.Content, "# Authentication [Conflict") {
+		t.Fatalf("blm.md's own clash is tagged at the clashing heading only: %q", d.Content)
 	}
 	if r := s.Rules("", "agent"); len(r.Conflicts) != 1 || r.Blocks[len(r.Blocks)-1].Heading != "LINE Login" || r.Blocks[len(r.Blocks)-1].Topic != "Authentication" {
 		t.Fatalf("rules must surface conflicts: %+v", r.Conflicts)
@@ -31,7 +31,7 @@ func TestConflictWorkflow(t *testing.T) {
 	if err != nil || res["ok"] != false || len(res["pending"].([]string)) != 1 {
 		t.Fatalf("pending expected: %v %v", err, res)
 	}
-	if d, _ := s.Get("blm"); !strings.Contains(d.Content, "[Conflict: [#1](<conflicts/") || strings.Contains(d.Content, "<<<<<<<") {
+	if d, _ := s.Get("blm"); !strings.Contains(d.Content, "[Conflict](<conflicts/") || strings.Contains(d.Content, "<<<<<<<") {
 		t.Fatalf("pending draft must keep the tag and no markers: %q", d.Content)
 	}
 	// เจ้าของแก้ block B แล้วติ๊ก
@@ -82,7 +82,7 @@ func TestConflictWorkflow(t *testing.T) {
 
 func TestConflictOnOtherNoteTagsRules(t *testing.T) {
 	s, _, root := tmpStore(t, BackendAgentsRoom)
-	mirrorNote(t, root, "blm", "# Authentication\n\n## LINE Login\n- rule one\n\n# Portal\n\n## LINE Login\n- other\n", "2026-09-01T00:00:00Z")
+	mirrorNote(t, root, "blm", "# Authentication\n\n## LINE Login\n- rule one\nmemory: line-login, other-note\n\n# Portal\n\n## LINE Login\n- other\nmemory: line-login\n", "2026-09-01T00:00:00Z")
 	p := mirrorNote(t, root, "line-login", "# LINE Login note\n\n## Flow\n- step a\n- step b\n", "2026-09-01T00:00:00Z")
 	if _, _, err := s.Edit("line-login", "- step b", "- step b (mine)"); err != nil {
 		t.Fatal(err)
@@ -93,10 +93,14 @@ func TestConflictOnOtherNoteTagsRules(t *testing.T) {
 		t.Fatalf("open: %v %+v", err, reports)
 	}
 	rules, _ := s.Get("blm")
-	if strings.Count(rules.Content, "[Conflict: [#1](<conflicts/") != 2 || !strings.Contains(rules.Content, "# Authentication [Conflict: [#1](<") || strings.Contains(rules.Content, "# Portal [Conflict") {
-		t.Fatalf("blm.md must be tagged at Authentication › LINE Login only: %q", rules.Content)
+	want := "memory: [Conflict](<conflicts/[wait] line-login-20"
+	if strings.Count(rules.Content, "[Conflict](<conflicts/") != 1 || !strings.Contains(rules.Content, want) || !strings.Contains(rules.Content, "[line-login.md](<line-login.md>)") || strings.Contains(rules.Content, "# Authentication [Conflict") {
+		t.Fatalf("blm.md must mark the note link in the memory line of Authentication › LINE Login: %q", rules.Content)
 	}
-	if d, _ := s.Get("line-login"); !strings.Contains(d.Content, "## Flow [Conflict: [#1](<conflicts/") || strings.Contains(d.Content, "# LINE Login note [Conflict") {
+	if !strings.Contains(rules.Content, "# Portal\n\n## LINE Login\n- other\nmemory: [Conflict]") == false && strings.Contains(rules.Content, "# Portal") && strings.Count(rules.Content, "memory:") != 2 {
+		t.Fatalf("memory lines: %q", rules.Content)
+	}
+	if d, _ := s.Get("line-login"); !strings.Contains(d.Content, "## Flow [Conflict](<conflicts/") || strings.Contains(d.Content, "# LINE Login note [Conflict") {
 		t.Fatalf("the note must be tagged at the heading of the clashing region: %q", d.Content)
 	}
 	if reports[0].NoteHeading != "## Flow" {
@@ -123,6 +127,7 @@ func TestConflictTagRegexCoversAllForms(t *testing.T) {
 		"## X [Conflict: #1](conflicts/a.md)",
 		"## X [Conflict: [#1](<conflicts/[wait] a b.md>), [#2](<conflicts/[wait] c.md>)]",
 		"## X [Conflict: [#1](<conflicts/[wait] a.md>)] [Conflict: #3]",
+		"## X [Conflict](<conflicts/[wait] a b.md>) [Conflict](<conflicts/[wait] c.md>)",
 	} {
 		if got := conflictTagRe.ReplaceAllString(in, ""); got != "## X" {
 			t.Fatalf("%q → %q", in, got)

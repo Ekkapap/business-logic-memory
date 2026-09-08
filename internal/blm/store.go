@@ -490,6 +490,13 @@ func (s *Store) Checkout(target string) (Note, error) {
 	_ = os.MkdirAll(filepath.Join(s.Dir, ".base"), 0o755)
 	_ = os.WriteFile(filepath.Join(s.Dir, ".base", target+".md"), []byte(src.Content), 0o644)
 	n, err := s.save(Input{Name: target, Target: target, Mode: "replace", Folder: src.Folder, Description: src.Description, Tags: src.Tags, Content: src.Content, HasContent: true, Base: src.Base}, "checkout")
+	if err == nil && target == RulesNote {
+		// blm.md: บรรทัด memory: เป็นลิงก์ไฟล์เสมอ (ไม่นับเป็นการแก้ → .base ตามไปด้วย)
+		if linked := s.linkMemoryLines(n.Content); linked != n.Content {
+			_ = os.WriteFile(filepath.Join(s.Dir, ".base", target+".md"), []byte(linked), 0o644)
+			n, err = s.save(Input{Name: target, Content: linked, HasContent: true}, "link")
+		}
+	}
 	return n, err
 }
 

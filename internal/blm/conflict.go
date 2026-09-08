@@ -38,7 +38,7 @@ var (
 	conflictFileRe = regexp.MustCompile(`^\[(wait|done)\] (.+)\.md$`)
 	// ป้ายเป็นลิงก์คลิกได้ไปที่รายงาน (เจ้าของ 2026-09-09: "#1 คลิกไม่ได้") · regex ครอบทั้งรูปเก่า [Conflict: #1, #2] และรูปลิงก์ ติดกันหลายอัน
 	// รูปที่ต้องจับ: `[Conflict: #1, #2]` (เก่า) · `[Conflict: #1](url)` (เก่า) · `[Conflict: [#1](<url>), [#2](<url>)]` (ปัจจุบัน: เลขแต่ละตัวเป็นลิงก์ของตัวเอง วงเล็บนอกเห็นบนหน้าจอ)
-	conflictTagRe = regexp.MustCompile(`(\s*\[Conflict: (?:\[#\d+\](?:\(<[^>]*>\)|\([^)]*\))(?:, )?|[^\]])*\](?:\(<[^>]*>\)|\([^)]*\))?)+`)
+	conflictTagRe = regexp.MustCompile(`(\s*\[Conflict(?:: (?:\[#\d+\](?:\(<[^>]*>\)|\([^)]*\))(?:, )?|[^\]])*)?\](?:\(<[^>]*>\)|\([^)]*\))?)+`)
 	checkedRe     = regexp.MustCompile(`(?m)^- \[[xX]\] `)
 )
 
@@ -346,11 +346,9 @@ cloudUpdatedAt: %s
 	return reports, nil
 }
 
-// tagFor = ลิงก์หนึ่งตัว `[#n](<conflicts/[wait] report.md>)` relative จากโน้ตใน store · n = ลำดับภายในหัวข้อนั้น (เริ่ม #1 ทุกหัวข้อ) ไม่ใช่ id ของรายงาน
-// เจ้าของ 2026-09-09: ต้องการแค่ลิงก์สั้น อ่านแล้วรู้ว่าคนละไฟล์ · ป้ายเต็ม `[Conflict: [#1](…), [#2](…)]`
-func tagFor(n int, reportPath string) string {
-	// ปลายทางในวงเล็บแหลม (CommonMark) ใส่ช่องว่าง/วงเล็บเหลี่ยมได้ตรง ๆ — percent-encoding เปิดไม่ติดใน AgentsRoom (ทดสอบ 2026-09-09)
-	return "[#" + strconv.Itoa(n) + "](<conflicts/" + filepath.Base(reportPath) + ">)"
+// tagFor = `[Conflict](<conflicts/[wait] report.md>)` ลิงก์ไปรายงาน relative จากโน้ตใน store (เจ้าของ 2026-09-09: ไม่ต้องมีเลข)
+func tagFor(_ int, reportPath string) string {
+	return "[Conflict](<conflicts/" + filepath.Base(reportPath) + ">)"
 }
 
 // tagLine ติดป้ายที่บรรทัดหัวข้อที่ตรงกับ head (เทียบหลังตัดป้ายเดิม) — ใช้กับหัวข้อในโน้ตที่ชน
@@ -361,7 +359,7 @@ func tagLine(content, head string, ids []string) string {
 	lines := strings.Split(content, "\n")
 	for i, l := range lines {
 		if conflictTagRe.ReplaceAllString(l, "") == head {
-			lines[i] = conflictTagRe.ReplaceAllString(l, "") + " [Conflict: " + strings.Join(ids, ", ") + "]"
+			lines[i] = conflictTagRe.ReplaceAllString(l, "") + " " + strings.Join(ids, " ")
 		}
 	}
 	return strings.Join(lines, "\n")
@@ -377,21 +375,20 @@ func (s *Store) refreshRuleTags() {
 	if err != nil {
 		return
 	}
-	groups := map[[2]string][]string{}
-	var order [][2]string
+	// ล้างของเดิมทั้งหมด (ป้ายที่หัวข้อแบบเก่า + [Conflict](…) หน้าลิงก์) แล้วสร้างใหม่จากรายงานที่ยัง wait
+	content := conflictTagRe.ReplaceAllString(rules.Content, "")
+	content = conflictPrefixRe.ReplaceAllString(content, "")
+	content = s.linkMemoryLines(content)
 	for _, c := range s.ListConflicts() {
 		if c.Status != "wait" {
 			continue
 		}
-		k := [2]string{c.Topic, c.Heading}
-		if _, ok := groups[k]; !ok {
-			order = append(order, k)
+		link := "[Conflict](<conflicts/" + filepath.Base(c.File) + ">)"
+		if c.Draft == RulesNote {
+			content = tagLine(content, c.NoteHeading, []string{link})
+			continue
 		}
-		groups[k] = append(groups[k], tagFor(len(groups[k])+1, filepath.Join(s.Root, c.File)))
-	}
-	content := conflictTagRe.ReplaceAllString(rules.Content, "")
-	for _, k := range order {
-		content = tagHeading(content, k[0], k[1], groups[k])
+		content = s.markMemory(content, c.Topic, c.Heading, c.Draft, link)
 	}
 	if content == rules.Content {
 		return
@@ -399,27 +396,102 @@ func (s *Store) refreshRuleTags() {
 	_, _ = s.save(Input{Name: RulesNote, Content: content, HasContent: true}, "conflict-tag")
 }
 
-// tagHeading เติม/แทนป้าย [Conflict: …] ที่บรรทัด `## <heading>` (ids ว่าง = ลบป้าย)
-// tagHeading ติดป้ายที่บรรทัด `# <topic>` (main) และ `## <heading>` (sub) ที่อยู่ใต้ topic นั้น · ป้ายเดิมบนบรรทัดนั้นถูกแทน
-func tagHeading(content, topic, heading string, ids []string) string {
-	lines := strings.Split(content, "\n")
-	tag := ""
-	if len(ids) > 0 {
-		tag = " [Conflict: " + strings.Join(ids, ", ") + "]"
+// memoryTokenRe ดึงชื่อโน้ตจาก token ในบรรทัด memory: ทั้งรูป `name`, `name ?`, `[name.md](<path>)`
+var (
+	memoryTokenRe    = regexp.MustCompile(`\[([^\]]+)\.md\]`)
+	conflictPrefixRe = regexp.MustCompile(`\[Conflict\]\(<[^>]*>\)\s*`)
+)
+
+func memoryNames(line string) []string {
+	var names []string
+	for _, tok := range strings.Split(strings.TrimPrefix(line, "memory:"), ",") {
+		tok = strings.TrimSpace(conflictPrefixRe.ReplaceAllString(tok, ""))
+		if tok == "" {
+			continue
+		}
+		if m := memoryTokenRe.FindStringSubmatch(tok); m != nil {
+			names = append(names, m[1])
+			continue
+		}
+		names = append(names, strings.Fields(tok)[0])
 	}
-	inTopic := false
+	return names
+}
+
+// noteLink ลิงก์ไปไฟล์โน้ต relative จาก store: สำเนา local ถ้ามี ไม่มีก็ mirror · ไม่พบที่ไหน = ชื่อเปล่า
+func (s *Store) noteLink(name string) string {
+	if s.Has(name) {
+		return "[" + name + ".md](<" + name + ".md>)"
+	}
+	if folder, ok := s.FindTargetFolder(name); ok {
+		if rel, err := filepath.Rel(s.Dir, filepath.Join(s.MirrorDir, folder, name+".md")); err == nil {
+			return "[" + name + ".md](<" + filepath.ToSlash(rel) + ">)"
+		}
+	}
+	return name
+}
+
+// linkMemoryLines ทุกบรรทัด `memory:` ใน blm.md → ลิงก์ไฟล์ทุกโน้ตที่เกี่ยวข้อง (เจ้าของ 2026-09-09: topic สรุปมาจากหลายไฟล์ ควรคลิกไปได้ทุกไฟล์)
+func (s *Store) linkMemoryLines(content string) string {
+	lines := strings.Split(content, "\n")
+	for i, l := range lines {
+		if !strings.HasPrefix(l, "memory:") {
+			continue
+		}
+		var out []string
+		for _, tok := range strings.Split(strings.TrimPrefix(l, "memory:"), ",") {
+			tok = strings.TrimSpace(conflictPrefixRe.ReplaceAllString(tok, ""))
+			if tok == "" {
+				continue
+			}
+			// แปลงเฉพาะ token ที่เป็นชื่อโน้ตจริง (มีใน store หรือ mirror) ข้อความอื่นคงเดิม
+			if names := memoryNames("memory: " + tok); len(names) == 1 && (s.Has(names[0]) || s.inMirror(names[0])) {
+				out = append(out, s.noteLink(names[0]))
+				continue
+			}
+			out = append(out, tok)
+		}
+		lines[i] = "memory: " + strings.Join(out, ", ")
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (s *Store) inMirror(name string) bool {
+	_, ok := s.FindTargetFolder(name)
+	return ok
+}
+
+// markMemory ใส่ `[Conflict](<report>)` หน้าลิงก์ของโน้ต note ในบรรทัด memory: ของ topic › heading · ไม่มีชื่อนั้นในบรรทัด = ต่อท้ายให้
+func (s *Store) markMemory(content, topic, heading, note, link string) string {
+	lines := strings.Split(content, "\n")
+	inTopic, inHead := false, false
 	for i, l := range lines {
 		clean := conflictTagRe.ReplaceAllString(l, "")
 		switch {
 		case strings.HasPrefix(clean, "# "):
 			inTopic = strings.TrimSpace(strings.TrimPrefix(clean, "# ")) == strings.TrimSpace(topic)
-			if inTopic {
-				lines[i] = clean + tag
+			inHead = false
+		case strings.HasPrefix(clean, "## "):
+			inHead = inTopic && strings.TrimSpace(strings.TrimPrefix(clean, "## ")) == strings.TrimSpace(heading)
+		case inHead && strings.HasPrefix(l, "memory:"):
+			var out []string
+			found := false
+			for _, tok := range strings.Split(strings.TrimPrefix(l, "memory:"), ",") {
+				tok = strings.TrimSpace(tok)
+				if tok == "" {
+					continue
+				}
+				if names := memoryNames("memory: " + tok); !found && len(names) == 1 && names[0] == note {
+					tok = link + " " + tok
+					found = true
+				}
+				out = append(out, tok)
 			}
-		case strings.HasPrefix(clean, "## ") && inTopic:
-			if strings.TrimSpace(strings.TrimPrefix(clean, "## ")) == strings.TrimSpace(heading) {
-				lines[i] = clean + tag
+			if !found {
+				out = append(out, link+" "+s.noteLink(note))
 			}
+			lines[i] = "memory: " + strings.Join(out, ", ")
+			return strings.Join(lines, "\n")
 		}
 	}
 	return strings.Join(lines, "\n")
