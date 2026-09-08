@@ -13,10 +13,10 @@ import (
 
 // Conflict workflow (เจ้าของกำหนด 2026-09-09): agent ตัดสินไม่ได้และเจ้าของยังไม่ตอบ (เช่น สั่งงานยาวแล้วไปนอน)
 // → เขียนสถานะ conflict ไว้ในร่าง blm.md ที่หัวข้อย่อย `[Conflict: #1, #2]` และออกรายงานต่อบริเวณที่ชน
-//   <store>/conflicts/<id>-<heading สั้น>.wait.md  (สถานะอยู่ในชื่อไฟล์ → สแกนได้ว่าเหลืออะไร · เจ้าของ 2026-09-09: ชื่อเดิม id-topic-heading ยาวเกิน)
+//   <store>/conflicts/[wait] <heading สั้น>-<yyyymmddHHMMSS>.md  (สถานะนำหน้าชื่อ อ่านง่ายในไฟล์ทรี · id อยู่ใน frontmatter · เจ้าของกำหนดรูปแบบ 2026-09-09)
 //   แต่ละรายงานมี block A (cloud) และ block B (ร่าง) แยกกัน มี checkbox markdown ให้เลือก แก้ข้อความใน block ก่อนติ๊กได้
 // → เจ้าของติ๊กแล้วสั่ง resolve: ประกอบร่างจากผล 3-way ที่เก็บไว้ (marker ต่อบริเวณ) ด้วย block ที่เลือก เลื่อน base ตาม cloud
-//   เปลี่ยนชื่อรายงานเป็น .done.md ลบป้ายออกจากหัวข้อ
+//   เปลี่ยนชื่อรายงานเป็น [done] … ลบป้ายออกจากหัวข้อ
 
 type ConflictReport struct {
 	ID       int    `json:"id"`
@@ -33,7 +33,7 @@ type ConflictReport struct {
 func (s *Store) conflictsDir() string { return filepath.Join(s.Dir, "conflicts") }
 
 var (
-	conflictFileRe = regexp.MustCompile(`^(\d+)-(.+)\.(wait|done)\.md$`)
+	conflictFileRe = regexp.MustCompile(`^\[(wait|done)\] (.+)\.md$`)
 	conflictTagRe  = regexp.MustCompile(`\s*\[Conflict: [^\]]*\]`)
 	checkedRe      = regexp.MustCompile(`(?m)^- \[[xX]\] `)
 )
@@ -52,8 +52,8 @@ func (s *Store) ListConflicts() []ConflictReport {
 			continue
 		}
 		meta, _, body := splitFront(string(raw))
-		id, _ := strconv.Atoi(m[1])
-		r := ConflictReport{ID: id, File: s.rel(filepath.Join(s.conflictsDir(), e.Name())), Status: m[3], Draft: meta["draft"], Topic: meta["topic"], Heading: meta["subtopic"], Created: meta["created"], Resolved: meta["resolved"]}
+		id, _ := strconv.Atoi(meta["id"])
+		r := ConflictReport{ID: id, File: s.rel(filepath.Join(s.conflictsDir(), e.Name())), Status: m[1], Draft: meta["draft"], Topic: meta["topic"], Heading: meta["subtopic"], Created: meta["created"], Resolved: meta["resolved"]}
 		r.Chosen = chosenBlock(body)
 		out = append(out, r)
 	}
@@ -225,7 +225,7 @@ func (s *Store) OpenConflict(name, topic, heading, reason string) ([]ConflictRep
 		next++
 		ids = append(ids, "#"+strconv.Itoa(id))
 		out = append(out, fmt.Sprintf("<<<<<<< #%d >>>>>>>", id))
-		file := filepath.Join(s.conflictsDir(), fmt.Sprintf("%d-%s.wait.md", id, slug(heading)))
+		file := filepath.Join(s.conflictsDir(), fmt.Sprintf("[wait] %s-%s.md", slug(heading), time.Now().Format("20060102150405")))
 		// ส่วนต่างล้วน ๆ ระหว่างสอง block (เจ้าของ 2026-09-09: อ่านสอง block เต็มแล้วบอกไม่ได้ว่าอันไหนถูก) — บรรทัดที่เท่ากันไม่ต้องอ่าน
 		only, _ := LineDiff(strings.Join(a, "\n"), strings.Join(b, "\n"))
 		var onlyA, onlyB []string
@@ -351,7 +351,7 @@ func (s *Store) ResolveConflicts(name string) (map[string]any, error) {
 			snapshot = strings.Replace(snapshot, marker, text, 1)
 			content = strings.Replace(content, marker, text, 1)
 			finished := strings.Replace(string(raw), "status: wait", "status: done\nresolved: "+time.Now().UTC().Format(time.RFC3339)+"\nchosen: "+c.Chosen, 1)
-			newName := strings.Replace(filepath.Base(c.File), ".wait.md", ".done.md", 1)
+			newName := strings.Replace(filepath.Base(c.File), "[wait] ", "[done] ", 1)
 			_ = os.WriteFile(filepath.Join(s.conflictsDir(), newName), []byte(finished), 0o644)
 			_ = os.Remove(filepath.Join(s.Root, c.File))
 			done = append(done, "#"+strconv.Itoa(c.ID))

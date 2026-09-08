@@ -16,7 +16,7 @@ func TestConflictWorkflow(t *testing.T) {
 	// cloud แก้บรรทัดเดียวกัน → ชน
 	_ = os.WriteFile(p, []byte("---\nname: \"blm\"\nfolder: \"features\"\nupdatedAt: \"2026-09-02T00:00:00Z\"\n---\n\n# Authentication\n\n## LINE Login\n- rule one\n- rule two (cloud)\nmemory: x\n"), 0o644)
 	reports, err := s.OpenConflict("blm", "Authentication", "LINE Login", "cloud says cloud, draft says mine")
-	if err != nil || len(reports) != 1 || reports[0].Status != "wait" || !strings.HasSuffix(reports[0].File, "1-line-login.wait.md") {
+	if err != nil || len(reports) != 1 || reports[0].Status != "wait" || !strings.Contains(reports[0].File, "/[wait] line-login-20") {
 		t.Fatalf("open: %v %+v", err, reports)
 	}
 	d, _ := s.Get("blm")
@@ -40,7 +40,7 @@ func TestConflictWorkflow(t *testing.T) {
 	if slug("2026-09-09 — blm_graph reads SocratiCode's graph") != "2026-09-09-blm-graph" {
 		t.Fatalf("slug must cut at a word boundary: %q", slug("2026-09-09 — blm_graph reads SocratiCode's graph"))
 	}
-	if !strings.Contains(string(raw), "## ต่างกันตรงไหน") || !strings.Contains(string(raw), "> - rule two (mine)") || len(filepath.Base(reports[0].File)) > 40 {
+	if !strings.Contains(string(raw), "## ต่างกันตรงไหน") || !strings.Contains(string(raw), "> - rule two (mine)") || len(filepath.Base(reports[0].File)) > 48 {
 		t.Fatalf("report must lead with the A/B difference and have a short name: %s\n%s", reports[0].File, raw)
 	}
 	// ยื่นซ้ำสำหรับร่างเดิม → แทนรายงานเก่า id เดิม ไม่งอกเป็น #2
@@ -63,7 +63,7 @@ func TestConflictWorkflow(t *testing.T) {
 		t.Fatalf("resolved draft: %q base %s", d.Content, d.Base)
 	}
 	list := s.ListConflicts()
-	if len(list) != 1 || list[0].Status != "done" || !strings.HasSuffix(list[0].File, ".done.md") {
+	if len(list) != 1 || list[0].Status != "done" || !strings.Contains(list[0].File, "/[done] line-login-20") {
 		t.Fatalf("done expected: %+v", list)
 	}
 	if _, err := os.Stat(filepath.Join(s.conflictsDir(), "blm.merged.md")); err == nil {
