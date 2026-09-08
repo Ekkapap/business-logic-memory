@@ -27,6 +27,7 @@ const usage = `blm <command> [args]
   sync --push|--pull [--apply] [--parallel] [--author a] [--role r] [--delete a,b]   plan, or with --apply push to AgentsRoom one by one (--parallel = all at once)
   edit <target> <find> <replace>  edit lines of a backend note locally (mirror → draft), push later with sync
   diff <name> · merge <name> mine|cloud|content [file]   see what changed on the cloud vs your draft, then resolve
+  conflicts · resolve <name>      list conflict reports (wait/done) · apply the blocks the owner ticked
   get <name> · save <name> <file|-> [--target t] [--mode m] [--folder f] [--description d] · update … · patch <name> <find> <replace> · delete <name>
   path                            add the blm folder to the user's PATH (prints the command if it cannot)
   guard                           PreToolUse hook: reads JSON on stdin, denies Bash writes inside the store
@@ -180,6 +181,15 @@ func run(cmd string, args []string) error {
 			a["content"] = c
 		}
 		res, err = srv.Call("blm_merge", a)
+		asJSON = true
+	case "conflicts":
+		res, err = srv.Call("blm_conflicts", map[string]any{})
+		asJSON = true
+	case "resolve":
+		if len(rest) < 1 {
+			return fmt.Errorf("blm resolve <draft-name>")
+		}
+		res, err = srv.Call("blm_resolve", map[string]any{"name": rest[0]})
 		asJSON = true
 	case "edit":
 		if len(rest) < 3 {

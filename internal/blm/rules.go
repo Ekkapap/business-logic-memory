@@ -37,6 +37,8 @@ type RulesResult struct {
 	PendingDrafts []string `json:"pendingDrafts"`
 	LastReadAt    string   `json:"lastReadAt,omitempty"`
 	Message       string   `json:"message,omitempty"`
+	// Conflicts รายงานที่ยังรอเจ้าของตัดสิน (สถานะ wait) — agent ต้องไม่ push ร่างนั้นจนกว่าจะ resolve
+	Conflicts []ConflictReport `json:"conflicts"`
 }
 
 // RulesPath ไฟล์กฎที่เป็นของจริง: mirror (agentsroom) หรือ store เอง (none/obsidian/custom) — "" = ยังไม่มี
@@ -55,7 +57,12 @@ func (s *Store) RulesPath() string {
 // จำเวลาที่อ่านครั้งล่าสุดไว้ใน store/.rules-read.json เพื่อชี้ block ที่เปลี่ยนตั้งแต่ครั้งก่อน
 func (s *Store) Rules(query, trigger string) RulesResult {
 	marker := filepath.Join(s.Dir, ".rules-read.json")
-	res := RulesResult{Query: query, Blocks: []RuleBlock{}, Headings: []string{}, ChangedSinceLastRead: []string{}, PendingDrafts: []string{}}
+	res := RulesResult{Query: query, Blocks: []RuleBlock{}, Headings: []string{}, ChangedSinceLastRead: []string{}, PendingDrafts: []string{}, Conflicts: []ConflictReport{}}
+	for _, c := range s.ListConflicts() {
+		if c.Status == "wait" {
+			res.Conflicts = append(res.Conflicts, c)
+		}
+	}
 	if raw, err := os.ReadFile(marker); err == nil {
 		var m struct{ At string }
 		_ = json.Unmarshal(raw, &m)

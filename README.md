@@ -48,6 +48,7 @@ Then in Claude Code: `/reload-plugins` → `/blm_init` (guided analysis: main to
 | `blm sync --push \| --pull [--apply]` | `blm_sync` | — |
 | `blm edit <target> <find> <replace>` | `blm_edit` | — |
 | `blm diff <name>` · `blm merge <name> mine\|cloud\|content` | `blm_diff` · `blm_merge` | — |
+| `blm conflicts` · `blm resolve <name>` | `blm_conflict` · `blm_conflicts` · `blm_resolve` | — |
 | `blm scan [path]` · `blm graph [query] [--rebuild]` | `blm_scan` · `blm_graph` | — |
 | `blm get/save/update/patch/delete` | `blm_get/save/update/patch/delete` | — |
 | — | `blm` (read rules) | `/blm ["topic"]` |

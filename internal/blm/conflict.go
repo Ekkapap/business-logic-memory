@@ -1,0 +1,312 @@
+package blm
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// Conflict workflow (เจ้าของกำหนด 2026-09-09): agent ตัดสินไม่ได้และเจ้าของยังไม่ตอบ (เช่น สั่งงานยาวแล้วไปนอน)
+// → เขียนสถานะ conflict ไว้ในร่าง blm.md ที่หัวข้อย่อย `[Conflict: #1, #2]` และออกรายงานต่อบริเวณที่ชน
+//   <store>/conflicts/<id>-<topic>-<heading>.wait.md  (สถานะอยู่ในชื่อไฟล์ → สแกนได้ว่าเหลืออะไร)
+//   แต่ละรายงานมี block A (cloud) และ block B (ร่าง) แยกกัน มี checkbox markdown ให้เลือก แก้ข้อความใน block ก่อนติ๊กได้
+// → เจ้าของติ๊กแล้วสั่ง resolve: ประกอบร่างจากผล 3-way ที่เก็บไว้ (marker ต่อบริเวณ) ด้วย block ที่เลือก เลื่อน base ตาม cloud
+//   เปลี่ยนชื่อรายงานเป็น .done.md ลบป้ายออกจากหัวข้อ
+
+type ConflictReport struct {
+	ID       int    `json:"id"`
+	File     string `json:"file"`
+	Status   string `json:"status"` // wait | done
+	Draft    string `json:"draft"`
+	Topic    string `json:"topic"`
+	Heading  string `json:"heading"`
+	Chosen   string `json:"chosen,omitempty"` // A | B | "" (ยังไม่เลือก) | "both" (ติ๊กสองช่อง = ผิด)
+	Created  string `json:"created"`
+	Resolved string `json:"resolved,omitempty"`
+}
+
+func (s *Store) conflictsDir() string { return filepath.Join(s.Dir, "conflicts") }
+
+var (
+	conflictFileRe = regexp.MustCompile(`^(\d+)-(.+)\.(wait|done)\.md$`)
+	conflictTagRe  = regexp.MustCompile(`\s*\[Conflict: [^\]]*\]`)
+	checkedRe      = regexp.MustCompile(`(?m)^- \[[xX]\] `)
+)
+
+// ListConflicts อ่านรายงานทั้งหมด (wait ก่อน done) — ใช้ใน blm_conflicts และแนบใน blm (Rules)
+func (s *Store) ListConflicts() []ConflictReport {
+	entries, _ := os.ReadDir(s.conflictsDir())
+	var out []ConflictReport
+	for _, e := range entries {
+		m := conflictFileRe.FindStringSubmatch(e.Name())
+		if m == nil {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(s.conflictsDir(), e.Name()))
+		if err != nil {
+			continue
+		}
+		meta, _, body := splitFront(string(raw))
+		id, _ := strconv.Atoi(m[1])
+		r := ConflictReport{ID: id, File: s.rel(filepath.Join(s.conflictsDir(), e.Name())), Status: m[3], Draft: meta["draft"], Topic: meta["topic"], Heading: meta["subtopic"], Created: meta["created"], Resolved: meta["resolved"]}
+		r.Chosen = chosenBlock(body)
+		out = append(out, r)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Status != out[j].Status {
+			return out[i].Status == "wait"
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out
+}
+
+// chosenBlock ดูว่า block ไหนถูกติ๊ก (A/B) — ติ๊กทั้งคู่หรือไม่ติ๊ก = ""
+func chosenBlock(body string) string {
+	a, b := blockSection(body, "A"), blockSection(body, "B")
+	ca, cb := checkedRe.MatchString(a), checkedRe.MatchString(b)
+	switch {
+	case ca && cb:
+		return "both"
+	case ca:
+		return "A"
+	case cb:
+		return "B"
+	}
+	return ""
+}
+
+// blockSection ตัดส่วน "## Block X" ถึงหัวข้อถัดไป
+func blockSection(body, which string) string {
+	start := strings.Index(body, "## Block "+which)
+	if start < 0 {
+		return ""
+	}
+	rest := body[start+len("## Block "+which):]
+	if end := strings.Index(rest, "\n## "); end >= 0 {
+		rest = rest[:end]
+	}
+	return rest
+}
+
+// blockText ดึงข้อความในรั้ว ```text … ``` ของ block (ที่เจ้าของอาจแก้แล้ว)
+func blockText(section string) string {
+	start := strings.Index(section, "```text\n")
+	if start < 0 {
+		return ""
+	}
+	rest := section[start+len("```text\n"):]
+	end := strings.LastIndex(rest, "\n```")
+	if end < 0 {
+		return strings.TrimRight(rest, "\n")
+	}
+	return rest[:end]
+}
+
+func slug(s string) string {
+	s = strings.ToLower(s)
+	s = regexp.MustCompile(`[^a-z0-9ก-๙]+`).ReplaceAllString(s, "-")
+	s = strings.Trim(s, "-")
+	if len([]rune(s)) > 40 {
+		s = string([]rune(s)[:40])
+	}
+	if s == "" {
+		s = "conflict"
+	}
+	return s
+}
+
+// OpenConflict สร้างรายงาน conflict สำหรับร่าง replace ที่ชนกับ cloud: หนึ่งไฟล์ต่อบริเวณที่ชน + เก็บผล 3-way (มี marker) ไว้ประกอบกลับ
+// และเติมป้าย `[Conflict: #n, …]` ที่หัวข้อย่อยในร่าง
+func (s *Store) OpenConflict(name, topic, heading, reason string) ([]ConflictReport, error) {
+	draft, err := s.Get(name)
+	if err != nil {
+		return nil, err
+	}
+	if draft.Mode != "replace" {
+		return nil, fmt.Errorf("conflict %q: only replace drafts can conflict", name)
+	}
+	folder, ok := s.FindTargetFolder(draft.Target)
+	if !ok {
+		return nil, fmt.Errorf("conflict %q: target not in mirror", name)
+	}
+	raw, _ := os.ReadFile(filepath.Join(s.MirrorDir, folder, draft.Target+".md"))
+	cloud := parseNote(draft.Target, string(raw))
+	base, _ := os.ReadFile(filepath.Join(s.Dir, ".base", draft.Target+".md"))
+	merged, n := ThreeWay(string(base), cloud.Content, draft.Content)
+	if n == 0 {
+		return nil, fmt.Errorf("conflict %q: no overlapping regions — blm_merge {keep:\"mine\"} can merge this without asking", name)
+	}
+	if err := os.MkdirAll(s.conflictsDir(), 0o755); err != nil {
+		return nil, err
+	}
+	next := 1
+	for _, c := range s.ListConflicts() {
+		if c.ID >= next {
+			next = c.ID + 1
+		}
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	// แยกบริเวณจาก marker แล้วแทนด้วย marker ที่มีเลข id เพื่อประกอบกลับตอน resolve
+	var reports []ConflictReport
+	var ids []string
+	lines := strings.Split(merged, "\n")
+	var out []string
+	for i := 0; i < len(lines); i++ {
+		if lines[i] != "<<<<<<< cloud" {
+			out = append(out, lines[i])
+			continue
+		}
+		var a, b []string
+		i++
+		for ; i < len(lines) && lines[i] != "======="; i++ {
+			a = append(a, lines[i])
+		}
+		i++
+		for ; i < len(lines) && lines[i] != ">>>>>>> mine"; i++ {
+			b = append(b, lines[i])
+		}
+		id := next
+		next++
+		ids = append(ids, "#"+strconv.Itoa(id))
+		out = append(out, fmt.Sprintf("<<<<<<< #%d >>>>>>>", id))
+		file := filepath.Join(s.conflictsDir(), fmt.Sprintf("%d-%s-%s.wait.md", id, slug(topic), slug(heading)))
+		body := fmt.Sprintf(`---
+id: %d
+draft: %s
+target: %s
+topic: %s
+subtopic: %s
+status: wait
+created: %s
+cloudUpdatedAt: %s
+---
+
+# Conflict #%d — %s › %s
+
+%s
+
+วิธีตัดสิน: แก้ข้อความในรั้วของ block ที่ต้องการได้ก่อน แล้วติ๊ก "- [x]" ที่ block นั้น **หนึ่งช่องเท่านั้น** จากนั้นสั่ง agent ว่า "resolve" (หรือ "blm resolve %s") — ติ๊กแล้ว blm.md ถูกอัปเดตทันทีและป้าย #%d หายไป
+
+## Block A — cloud (AgentsRoom, updated %s)
+- [ ] เลือก block นี้
+`+"```text\n%s\n```"+`
+
+## Block B — draft (ร่างของ agent ใน session นี้)
+- [ ] เลือก block นี้
+`+"```text\n%s\n```"+`
+`, id, name, draft.Target, topic, heading, now, cloud.UpdatedAt, id, topic, heading, strings.TrimSpace(reason), name, id, cloud.UpdatedAt, strings.Join(a, "\n"), strings.Join(b, "\n"))
+		if err := os.WriteFile(file, []byte(body), 0o644); err != nil {
+			return nil, err
+		}
+		reports = append(reports, ConflictReport{ID: id, File: s.rel(file), Status: "wait", Draft: name, Topic: topic, Heading: heading, Created: now})
+	}
+	// ผล 3-way ที่มี marker เลข id (ใช้ประกอบกลับ) + base เลื่อนไปที่ cloud ปัจจุบันตอน resolve
+	_ = os.WriteFile(filepath.Join(s.conflictsDir(), name+".merged.md"), []byte("cloudUpdatedAt: "+cloud.UpdatedAt+"\n---\n"+strings.Join(out, "\n")), 0o644)
+	// ป้ายที่หัวข้อย่อยในร่าง (ตัดป้ายเก่าก่อน)
+	tagged := tagHeading(draft.Content, heading, ids)
+	if _, err := s.save(Input{Name: name, Target: draft.Target, Mode: "replace", Folder: draft.Folder, Description: draft.Description, Tags: draft.Tags, Content: tagged, HasContent: true, Base: draft.Base}, "conflict"); err != nil {
+		return nil, err
+	}
+	return reports, nil
+}
+
+// tagHeading เติม/แทนป้าย [Conflict: …] ที่บรรทัด `## <heading>` (ids ว่าง = ลบป้าย)
+func tagHeading(content, heading string, ids []string) string {
+	lines := strings.Split(content, "\n")
+	for i, l := range lines {
+		if !strings.HasPrefix(l, "## ") {
+			continue
+		}
+		clean := conflictTagRe.ReplaceAllString(l, "")
+		if strings.TrimSpace(strings.TrimPrefix(clean, "## ")) != strings.TrimSpace(heading) {
+			continue
+		}
+		if len(ids) > 0 {
+			clean += " [Conflict: " + strings.Join(ids, ", ") + "]"
+		}
+		lines[i] = clean
+	}
+	return strings.Join(lines, "\n")
+}
+
+// ResolveConflicts ประกอบร่างจาก block ที่เจ้าของเลือก **ทีละรายงานที่ติ๊กแล้ว** (เจ้าของ 2026-09-09: done แล้วอัปเดต blm.md ทันที ป้าย #เลขนั้นหาย)
+// บริเวณที่ยังไม่ติ๊กใช้ข้อความฝั่งร่าง (block B) ไว้ชั่วคราวและป้ายยังค้าง · ครบทุกบริเวณ = เลื่อน base ไป cloud และลบ snapshot
+func (s *Store) ResolveConflicts(name string) (map[string]any, error) {
+	var mine []ConflictReport
+	for _, c := range s.ListConflicts() {
+		if c.Draft == name && c.Status == "wait" {
+			mine = append(mine, c)
+		}
+	}
+	if len(mine) == 0 {
+		return nil, fmt.Errorf("resolve %q: no open conflicts", name)
+	}
+	mergedRaw, err := os.ReadFile(filepath.Join(s.conflictsDir(), name+".merged.md"))
+	if err != nil {
+		return nil, fmt.Errorf("resolve %q: merged snapshot missing", name)
+	}
+	parts := strings.SplitN(string(mergedRaw), "\n---\n", 2)
+	cloudAt := strings.TrimPrefix(parts[0], "cloudUpdatedAt: ")
+	snapshot := parts[len(parts)-1]
+	content := snapshot
+	heading := mine[0].Heading
+	var done, pending, both []string
+	for _, c := range mine {
+		marker := fmt.Sprintf("<<<<<<< #%d >>>>>>>", c.ID)
+		raw, _ := os.ReadFile(filepath.Join(s.Root, c.File))
+		_, _, body := splitFront(string(raw))
+		switch c.Chosen {
+		case "A", "B":
+			text := blockText(blockSection(body, c.Chosen))
+			snapshot = strings.Replace(snapshot, marker, text, 1)
+			content = strings.Replace(content, marker, text, 1)
+			finished := strings.Replace(string(raw), "status: wait", "status: done\nresolved: "+time.Now().UTC().Format(time.RFC3339)+"\nchosen: "+c.Chosen, 1)
+			newName := strings.Replace(filepath.Base(c.File), ".wait.md", ".done.md", 1)
+			_ = os.WriteFile(filepath.Join(s.conflictsDir(), newName), []byte(finished), 0o644)
+			_ = os.Remove(filepath.Join(s.Root, c.File))
+			done = append(done, "#"+strconv.Itoa(c.ID))
+		case "both":
+			both = append(both, "#"+strconv.Itoa(c.ID))
+			content = strings.Replace(content, marker, blockText(blockSection(body, "B")), 1)
+		default:
+			pending = append(pending, "#"+strconv.Itoa(c.ID))
+			content = strings.Replace(content, marker, blockText(blockSection(body, "B")), 1)
+		}
+	}
+	remaining := append(append([]string{}, pending...), both...)
+	sort.Strings(remaining)
+	content = tagHeading(content, heading, remaining)
+	draft, err := s.Get(name)
+	if err != nil {
+		return nil, err
+	}
+	base := draft.Base
+	if len(remaining) == 0 {
+		folder, _ := s.FindTargetFolder(draft.Target)
+		if raw, err := os.ReadFile(filepath.Join(s.MirrorDir, folder, draft.Target+".md")); err == nil {
+			_ = os.MkdirAll(filepath.Join(s.Dir, ".base"), 0o755)
+			_ = os.WriteFile(filepath.Join(s.Dir, ".base", draft.Target+".md"), []byte(parseNote(draft.Target, string(raw)).Content), 0o644)
+		}
+		base = cloudAt
+		_ = os.Remove(filepath.Join(s.conflictsDir(), name+".merged.md"))
+	} else {
+		_ = os.WriteFile(filepath.Join(s.conflictsDir(), name+".merged.md"), []byte("cloudUpdatedAt: "+cloudAt+"\n---\n"+snapshot), 0o644)
+	}
+	n, err := s.save(Input{Name: name, Target: draft.Target, Mode: "replace", Folder: draft.Folder, Description: draft.Description, Tags: draft.Tags, Content: content, HasContent: true, Base: base}, "merge")
+	if err != nil {
+		return nil, err
+	}
+	res := map[string]any{"ok": len(remaining) == 0, "name": n.Name, "done": done, "pending": pending, "bothChecked": both, "base": n.Base, "bytes": len(n.Content)}
+	if len(remaining) == 0 {
+		res["next"] = "blm_sync {apply:true} to push"
+	} else {
+		res["message"] = "draft updated for the ticked blocks; still waiting on " + strings.Join(remaining, ", ") + " (tick exactly one block each)"
+	}
+	return res, nil
+}
