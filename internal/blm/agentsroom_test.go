@@ -133,6 +133,7 @@ func TestPushAllParallel(t *testing.T) {
 		t.Fatalf("only the failed note must remain: %+v", left)
 	}
 	// โหมดขนานกับ server จำลองที่รับทีละตัว: ต้องรายงานว่าไม่เข้า (ไม่ retry) และร่างยังอยู่
+	_ = s.Delete("boom")
 	for _, n := range []string{"p1", "p2", "p3"} {
 		_, _ = s.Save(Input{Name: n, Content: "x", HasContent: true, Description: "d"})
 	}
