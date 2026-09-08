@@ -2,7 +2,6 @@ package blm
 
 import (
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -38,7 +37,7 @@ func (s *Store) conflictsDir() string { return filepath.Join(s.Dir, "conflicts")
 var (
 	conflictFileRe = regexp.MustCompile(`^\[(wait|done)\] (.+)\.md$`)
 	// ป้ายเป็นลิงก์คลิกได้ไปที่รายงาน (เจ้าของ 2026-09-09: "#1 คลิกไม่ได้") · regex ครอบทั้งรูปเก่า [Conflict: #1, #2] และรูปลิงก์ ติดกันหลายอัน
-	conflictTagRe = regexp.MustCompile(`(\s*\[Conflict: [^\]]*\](\([^)]*\))?)+`)
+	conflictTagRe = regexp.MustCompile(`(\s*\[Conflict: [^\]]*\](\(<[^>]*>\)|\([^)]*\))?)+`)
 	checkedRe     = regexp.MustCompile(`(?m)^- \[[xX]\] `)
 )
 
@@ -324,9 +323,10 @@ cloudUpdatedAt: %s
 	return reports, nil
 }
 
-// tagFor = `[Conflict: #n](conflicts/<report>)` ลิงก์ relative จากโน้ตใน store (blm.md และโน้ตอื่นอยู่โฟลเดอร์เดียวกัน) เว้นวรรค/วงเล็บถูก escape
+// tagFor = `[Conflict: #n](<conflicts/[wait] report.md>)` ลิงก์ relative จากโน้ตใน store (blm.md และโน้ตอื่นอยู่โฟลเดอร์เดียวกัน)
 func tagFor(id int, reportPath string) string {
-	return "[Conflict: #" + strconv.Itoa(id) + "](conflicts/" + url.PathEscape(filepath.Base(reportPath)) + ")"
+	// ปลายทางในวงเล็บแหลม (CommonMark) ใส่ช่องว่าง/วงเล็บเหลี่ยมได้ตรง ๆ — percent-encoding เปิดไม่ติดใน AgentsRoom (ทดสอบ 2026-09-09)
+	return "[Conflict: #" + strconv.Itoa(id) + "](<conflicts/" + filepath.Base(reportPath) + ">)"
 }
 
 // tagLine ติดป้ายที่บรรทัดหัวข้อที่ตรงกับ head (เทียบหลังตัดป้ายเดิม) — ใช้กับหัวข้อในโน้ตที่ชน
