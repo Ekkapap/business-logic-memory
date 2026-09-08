@@ -22,7 +22,8 @@ const usage = `blm <command> [args]
   status [--json]                 readiness, paths, rules, temp notes, tools, stats
   report [name] [--json]          latest report
   tools <action> [--docker] [tool] status|get|install|start|stop|restart|gen-graph|help  (socraticode|obsidian|graphify)
-  sync --push|--pull [--json]     sync plan / pull command
+  sync --push|--pull [--apply] [--author a] [--role r] [--delete a,b]   plan, or with --apply push everything to AgentsRoom in parallel (no agent involved)
+  edit <target> <find> <replace>  edit lines of a backend note locally (mirror → draft), push later with sync
   get <name> · save <name> <file|-> [--target t] [--mode m] [--folder f] [--description d] · update … · patch <name> <find> <replace> · delete <name>
   path                            add the blm folder to the user's PATH (prints the command if it cannot)
   guard                           PreToolUse hook: reads JSON on stdin, denies Bash writes inside the store
@@ -105,12 +106,20 @@ func run(cmd string, args []string) error {
 		fmt.Println(text)
 		return nil
 	case "sync":
-		a := map[string]any{"direction": "push"}
+		a := map[string]any{"direction": "push", "apply": flags["apply"] != ""}
 		if flags["pull"] != "" {
 			a["direction"] = "pull"
 		}
 		if d := flags["done"]; d != "" {
 			a["done"] = toAny(strings.Split(d, ","))
+		}
+		if d := flags["delete"]; d != "" {
+			a["delete"] = toAny(strings.Split(d, ","))
+		}
+		for _, k := range []string{"author", "role"} {
+			if v := flags[k]; v != "" {
+				a[k] = v
+			}
 		}
 		res, err = srv.Call("blm_sync", a)
 		asJSON = true
@@ -135,6 +144,12 @@ func run(cmd string, args []string) error {
 			}
 		}
 		res, err = srv.Call("blm_"+cmd, a)
+		asJSON = true
+	case "edit":
+		if len(rest) < 3 {
+			return fmt.Errorf("blm edit <target> <find> <replace>")
+		}
+		res, err = srv.Call("blm_edit", map[string]any{"target": rest[0], "find": rest[1], "replace": rest[2]})
 		asJSON = true
 	case "patch":
 		if len(rest) < 3 {
@@ -195,7 +210,7 @@ func splitFlags(args []string) (map[string]string, []string) {
 			continue
 		}
 		switch k {
-		case "json", "push", "pull", "docker":
+		case "json", "push", "pull", "docker", "apply":
 			flags[k] = "1"
 		default:
 			if i+1 < len(args) {

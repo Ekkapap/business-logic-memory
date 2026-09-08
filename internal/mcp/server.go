@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/Ekkapap/business-logic-memory/internal/blm"
 )
@@ -57,6 +58,8 @@ func tools(c blm.Config) []tool {
 		{"blm_update", "Append to an existing temp note (like memory_save mode append); metadata can be changed at the same time", obj(noteProps, "name", "content")},
 		{"blm_patch", "Replace an exact string in a temp note (must match exactly once)", obj(map[string]any{"name": noteProps["name"], "find": str(""), "replace": str("")}, "name", "find", "replace")},
 		{"blm_delete", "Delete a temp note (the previous version is snapshotted to history/)", obj(map[string]any{"name": noteProps["name"]}, "name")},
+		{"blm_edit", "Edit a few lines of an EXISTING backend note without reading it: blm loads the note from the local mirror (or the pending draft), replaces `find` with `replace` (must match exactly once) and stores the whole result as a replace-draft in temp. Returns only 3 lines of context around the change. Push later with blm_sync. Use this instead of memory_get + memory_save.",
+			obj(map[string]any{"target": str("backend note name (e.g. line-login-linking)"), "find": str("exact text to replace (must occur once)"), "replace": str("new text")}, "target", "find", "replace")},
 		{"blm_status", "Everything at once: readiness, binary/project paths, backend/store/mirror, rules file (topics/rules, last read), temp notes + size, history/reports, configured neighbour tools and rtk-gain-style stats — returns `terminal` ready to print", obj(map[string]any{})},
 		{"blm_report", "With rows: compose and save a rules check report (the tool aligns columns by real monospace width, writes reports/<date>-businesslogic.md, records a check stat) and returns `terminal` to print verbatim · without rows: read the latest report (filter by name)",
 			obj(map[string]any{
@@ -72,8 +75,16 @@ func tools(c blm.Config) []tool {
 			obj(map[string]any{"event": enum("", "lookup", "override", "fixed"), "query": str(""), "topic": str(""), "note": str(""), "count": map[string]any{"type": "number"}}, "event")},
 		{"blm_tools", "Manage neighbour tools (socraticode | obsidian | graphify): status · get · install · start · stop · restart · gen-graph · help — acts when it knows the command, otherwise returns the command for the user to run",
 			obj(map[string]any{"action": enum("", "status", "get", "install", "start", "stop", "restart", "gen-graph", "help"), "tool": enum("", "socraticode", "obsidian", "graphify"), "docker": map[string]any{"type": "boolean", "description": "socraticode: run Qdrant + Ollama in Docker instead of native (required on Windows)"}}, "action")},
-		{"blm_sync", "push: move temp notes into the backend — first call without done returns the plan (notes with the same target merged, folder filled from mirror, warnings for missing targets); apply ALL items in parallel (each targets a different note), then call again with done=[names that succeeded] to archive them to .synced/ · pull: refresh mirror/store from the backend before reading rules",
-			obj(map[string]any{"direction": enum("push (default) | pull", "push", "pull"), "done": strArr("temp notes already pushed successfully"), "names": strArr("restrict the plan to these notes (omit = all)")})},
+		{"blm_sync", "push: sync temp notes into the backend. apply=true (preferred): blm spawns the AgentsRoom MCP itself and runs every memory_save in parallel, archives what succeeded and returns only ok/error per note — no note content passes through your context. Without apply: returns the plan for you to execute by hand. pull: refresh mirror/store from the backend before reading rules",
+			obj(map[string]any{
+				"direction": enum("push (default) | pull", "push", "pull"),
+				"apply":     map[string]any{"type": "boolean", "description": "true = blm performs the memory_save/memory_delete calls itself (parallel) and archives; false = return the plan only"},
+				"author":    str("agent display name for AgentsRoom (with apply)"),
+				"role":      str("canonical role id for AgentsRoom, e.g. fullstack (with apply)"),
+				"delete":    strArr("backend notes to delete after the push (e.g. an old name after a rename; with apply)"),
+				"done":      strArr("manual mode only: temp notes already pushed successfully → archive them"),
+				"names":     strArr("restrict the plan to these notes (omit = all)"),
+			})},
 	}
 	if !c.HasSync() {
 		// backend ที่ไม่มีปลายทาง (none/obsidian) ไม่ประกาศ blm_sync เลย — เรียกไม่ได้ ไม่ใช่เรียกแล้วบอกว่า skip
@@ -138,6 +149,12 @@ func (s *Server) Call(name string, a map[string]any) (any, error) {
 		return map[string]any{"ok": err == nil, "note": n}, err
 	case "blm_delete":
 		return map[string]any{"ok": true}, s.store.Delete(in.Name)
+	case "blm_edit":
+		n, ctx, err := s.store.Edit(getStr(a, "target"), getStr(a, "find"), getStr(a, "replace"))
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"ok": true, "draft": n.Name, "mode": n.Mode, "folder": n.Folder, "bytes": len(n.Content), "context": ctx, "next": "push with blm_sync {apply:true} when the owner says update memory"}, nil
 	case "blm_status":
 		st := s.store.Status(s.cfg)
 		return map[string]any{"status": st, "terminal": blm.RenderStatus(st)}, nil
@@ -192,17 +209,31 @@ func (s *Server) Call(name string, a map[string]any) (any, error) {
 		if !s.cfg.HasSync() {
 			return nil, fmt.Errorf("backend %s has no sync target", s.cfg.Backend)
 		}
-		return s.sync(getStr(a, "direction"), getArr(a, "done"), getArr(a, "names"))
+		apply, _ := a["apply"].(bool)
+		return s.sync(getStr(a, "direction"), getArr(a, "done"), getArr(a, "names"), apply, getStr(a, "author"), getStr(a, "role"), getArr(a, "delete"))
 	}
 	return nil, fmt.Errorf("unknown tool %s", name)
 }
 
-func (s *Server) sync(direction string, done, names []string) (any, error) {
+func (s *Server) sync(direction string, done, names []string, apply bool, author, role string, deletes []string) (any, error) {
 	if direction == "pull" {
 		if s.cfg.Backend == blm.BackendCustom {
 			return map[string]any{"command": s.cfg.PullCommand, "next": "run command via Bash, then read the rules again with blm"}, nil
 		}
-		return map[string]any{"next": "call AgentsRoom `memory_list` to force a fresh fetch (mirror " + s.cfg.Mirror + " is overwritten with the real notes), then call blm again"}, nil
+		if apply {
+			// memory_list บังคับ AgentsRoom fetch ใหม่และเขียน mirror — เรียกเองไม่ต้องให้ agent ทำ
+			c, err := s.agentsRoom()
+			if err != nil {
+				return nil, err
+			}
+			defer c.Close()
+			t := time.Now()
+			if _, err := c.CallTool("memory_list", map[string]any{}); err != nil {
+				return nil, err
+			}
+			return map[string]any{"ok": true, "ms": time.Since(t).Milliseconds(), "next": "mirror " + s.cfg.Mirror + " refreshed — call blm again"}, nil
+		}
+		return map[string]any{"next": "call AgentsRoom `memory_list` to force a fresh fetch (mirror " + s.cfg.Mirror + " is overwritten with the real notes), then call blm again — or blm_sync {direction:pull, apply:true}"}, nil
 	}
 	if len(done) > 0 {
 		var archived []string
@@ -234,6 +265,35 @@ func (s *Server) sync(direction string, done, names []string) (any, error) {
 		notes = only
 	}
 	plan := s.store.PlanSync(notes)
+	if apply && s.cfg.Backend == blm.BackendAgentsRoom {
+		if len(plan) == 0 && len(deletes) == 0 {
+			return map[string]any{"ok": true, "pushed": []any{}, "next": "no temp notes to sync"}, nil
+		}
+		c, err := s.agentsRoom()
+		if err != nil {
+			return nil, err
+		}
+		defer c.Close()
+		if author == "" {
+			author = "blm"
+		}
+		if role == "" {
+			role = "fullstack"
+		}
+		t := time.Now()
+		pushed, deleted := s.store.PushAll(c, plan, author, role, deletes)
+		failed := 0
+		for _, r := range pushed {
+			if !r.OK {
+				failed++
+			}
+		}
+		var remaining []string
+		for _, n := range s.store.List() {
+			remaining = append(remaining, n.Name)
+		}
+		return map[string]any{"ok": failed == 0, "pushed": pushed, "deleted": deleted, "failed": failed, "ms": time.Since(t).Milliseconds(), "remaining": remaining, "warnings": planWarnings(plan)}, nil
+	}
 	next := "no temp notes to sync"
 	if s.cfg.Backend == blm.BackendCustom {
 		for i := range plan {
@@ -250,6 +310,27 @@ func (s *Server) sync(direction string, done, names []string) (any, error) {
 	}
 	// รวมโน้ต target เดียวกันแล้ว → ทุกรายการคนละโน้ต ยิงพร้อมกันได้ (เจ้าของสั่ง 2026-09-09: memory_save ช้า ห้ามรอทีละตัว)
 	return map[string]any{"plan": plan, "parallel": true, "next": next}, nil
+}
+
+func (s *Server) agentsRoom() (*blm.Client, error) {
+	e, err := blm.LoadAgentsRoomMCP(s.root)
+	if err != nil {
+		return nil, err
+	}
+	return blm.Connect(e)
+}
+
+func planWarnings(plan []blm.SyncItem) []string {
+	var w []string
+	for _, it := range plan {
+		for _, x := range it.Warnings {
+			w = append(w, it.MemorySave.Name+": "+x)
+		}
+	}
+	if w == nil {
+		w = []string{}
+	}
+	return w
 }
 
 // ---- JSON-RPC over stdio -----------------------------------------------------

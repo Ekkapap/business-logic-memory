@@ -30,6 +30,33 @@ description: How to record project knowledge during a session without blocking o
 - หลังตรวจ: NOT PASSED ที่คุณแก้ความเข้าใจได้เองจากไฟล์กฎ → `blm_stat {event:"fixed", count}` · เจ้าของถามเรื่องกฎแล้วคุณค้นไฟล์กฎมาตอบ → `blm_stat {event:"lookup", query}`
 - เจ้าของเปลี่ยนกฎ (ตอบต่างจากไฟล์ หรือสั่งเขียนกฎใหม่) = **override ความจำเดิมทั้งหมดของเรื่องนั้น** ต้องให้เจ้าของ confirm ก่อน แล้ว `blm_stat {event:"override", topic, note}` + อัปเดตร่างใน temp (`blm_save target=blm` ฉบับเต็มที่แก้แล้ว) — **ยังไม่ sync** จนกว่าเจ้าของสั่ง
 
+## แก้บางบรรทัดของโน้ตปลายทางที่มีอยู่แล้ว
+
+- **ห้าม** `memory_get` มาทั้งก้อนแล้ว `memory_save` กลับ (เนื้อโน้ตวิ่งผ่าน context สองรอบ) → ใช้ `blm_edit { target, find, replace }` blm อ่านโน้ตจาก mirror บนดิสก์ แทนข้อความ (ต้องพบพอดี 1) แล้วเก็บเป็นร่าง replace ใน temp คืนมาแค่ 3 บรรทัดรอบจุดแก้ แก้ซ้ำได้ต่อจากร่างเดิม
+- section ใหม่ของโน้ตเดิม → `blm_save { name: "<target>-<วันที่>", target, content }` (mode append) ตามเดิม
+
+## ตอนเจ้าของสั่ง "update memory" (มีเฉพาะ backend ที่มีปลายทาง: agentsroom/custom)
+
+1. `blm_sync { apply: true, author: "<ชื่อคุณ>", role: "<role id>" }` — **blm ทำเองทั้งหมด**: spawn AgentsRoom MCP, ยิง `memory_save` ทุกรายการพร้อมกัน (แผนรวมโน้ต target เดียวกันแล้ว ทุกรายการคนละโน้ต), archive ตัวที่สำเร็จไป `.synced/` แล้วคืนแค่ ok/error/ms ต่อโน้ต เนื้อโน้ตไม่ผ่าน context ของคุณเลย (เจ้าของกำหนด 2026-09-09) · ใส่ `delete: ["ชื่อเก่า"]` เมื่อโน้ตถูกเปลี่ยนชื่อ (เช่น `project-business-logic` → `blm`)
+2. อ่าน `warnings` และรายการ `failed` ถ้ามี — รายการที่ล้มยังอยู่ใน temp เรียกซ้ำได้ด้วย `names`
+3. ห้ามเรียก `memory_save` เองแทนขั้นตอนนี้ เว้นแต่ `blm_sync` ตอบว่าไม่พบ AgentsRoom MCP ใน `.mcp.json` (เปิดโปรเจ็คใน AgentsRoom หนึ่งครั้งให้มันเขียน) ค่อยใช้แผนจาก `blm_sync` (ไม่ใส่ apply) ยิงขนานเอง
+- `blm_sync { direction: "pull", apply: true }` ก่อนอ่านกฎเมื่อสงสัยว่า mirror เก่า (blm เรียก `memory_list` ให้ mirror สดเอง)
+- backend none/obsidian: ไม่มี `blm_sync` เลย — ไฟล์ใน store คือของจริง
+
+## กฎธุรกิจ — `blm.md` (source of truth เดียว)
+
+- `blm.md` คือ "กฎที่เป็นจริงตอนนี้" เจ้าของเป็นคนเปลี่ยนเท่านั้น โน้ต memory อื่นคือที่มา/ประวัติ · หัวไฟล์มีตาราง `## Main Business` = หัวข้อหลักทั้งหมด
+- `blm` (ไม่ใส่ query = ทั้งไฟล์ · ใส่คำ = ทั้ง block ของหัวข้อย่อยที่ตรง) — เจ้าของสั่งผ่าน `/blm "<หัวข้อ>"` ตอนเริ่มวันและเมื่อ context บวม ตอบตามลำดับในคำสั่งนั้น
+- **agent เรียก `blm "<เรื่อง>"` เองได้ทุกเมื่อ** ที่ความจำขัดกับโค้ด/โน้ต หรือกำลังจะตัดสินใจเรื่อง business logic — อ่านเงียบ ๆ ไม่ต้องทำรายงาน รายงานเต็มมีเฉพาะตอนเจ้าของสั่ง `/blm`
+- โค้ดขัดกับกฎ = หยุดแล้วรายงาน ห้ามแก้โค้ดให้เข้ากับความจำ ห้ามแก้กฎเอง — เสนอผ่าน `blm_save target=blm` (ร่างรอ confirm) พร้อมคำสั่งของเจ้าของ
+- เรื่องใหม่หรือหัวข้อย่อยที่โตเกินไป → เสนอยกเป็นหัวข้อหลัก (เจ้าของตัดสิน)
+
+## สถิติ (ดูใน `blm_status` / `blm status`)
+
+- `blm` ลง `read` ให้เอง (ส่ง `trigger: "user"` เมื่อเจ้าของสั่ง) · `blm_report {rows…}` ลง `check` ให้เอง
+- หลังตรวจ: NOT PASSED ที่คุณแก้ความเข้าใจได้เองจากไฟล์กฎ → `blm_stat {event:"fixed", count}` · เจ้าของถามเรื่องกฎแล้วคุณค้นไฟล์กฎมาตอบ → `blm_stat {event:"lookup", query}`
+- เจ้าของเปลี่ยนกฎ (ตอบต่างจากไฟล์ หรือสั่งเขียนกฎใหม่) = **override ความจำเดิมทั้งหมดของเรื่องนั้น** ต้องให้เจ้าของ confirm ก่อน แล้ว `blm_stat {event:"override", topic, note}` + อัปเดตร่างใน temp (`blm_save target=blm` ฉบับเต็มที่แก้แล้ว) — **ยังไม่ sync** จนกว่าเจ้าของสั่ง
+
 ## ตอนเจ้าของสั่ง "update memory" (มีเฉพาะ backend ที่มีปลายทาง: agentsroom/custom)
 
 1. `blm_sync` → `plan[]` แต่ละรายการคือ argument ของ `memory_save` ที่พร้อมส่ง (custom: `command` ให้รันผ่าน Bash)

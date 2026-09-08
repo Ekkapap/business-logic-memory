@@ -45,7 +45,8 @@ Then in Claude Code: `/reload-plugins` → `/blm_init` (guided analysis: main to
 | `blm status [--json]` — readiness first (`READY` / `NOT READY <why>`), then paths, rules, temp notes, tools, stats; rtk-gain style, colours on a TTY | `blm_status` | `/blm_status` |
 | `blm report [name]` | `blm_report` | `/blm_report` |
 | `blm tools <action> [tool]` | `blm_tools` | `/blm_tools` |
-| `blm sync --push \| --pull` | `blm_sync` | — |
+| `blm sync --push \| --pull [--apply]` | `blm_sync` | — |
+| `blm edit <target> <find> <replace>` | `blm_edit` | — |
 | `blm get/save/update/patch/delete` | `blm_get/save/update/patch/delete` | — |
 | — | `blm` (read rules) | `/blm ["topic"]` |
 | — | `blm_stat` | — |

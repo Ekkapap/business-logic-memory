@@ -391,8 +391,77 @@ func parseNote(name, raw string) Note {
 			n.Description = d
 		}
 	}
+	// mirror ของ AgentsRoom เขียน folder เป็น "global / conventions" (quoted + เว้นวรรค) → ให้ได้ค่า canonical
+	if f := meta["folder"]; f != "" {
+		var q string
+		if json.Unmarshal([]byte(f), &q) == nil {
+			f = q
+		}
+		n.Folder = strings.ReplaceAll(f, " ", "")
+	}
 	if t := meta["tags"]; t != "" {
 		_ = json.Unmarshal([]byte(t), &n.Tags)
 	}
 	return n
+}
+
+// Edit แก้บางบรรทัดของโน้ตปลายทางแบบ local (เจ้าของ 2026-09-09: เนื้อโน้ตต้องไม่ผ่าน context ของ agent):
+// อ่านต้นทาง = ร่างใน temp ชื่อเดียวกัน (ถ้ามี แก้ต่อจากครั้งก่อน) ไม่งั้นโน้ตใน mirror → แทน find→replace (ต้องพบพอดี 1)
+// → เก็บทั้งก้อนเป็นร่าง mode replace ใน temp พร้อม folder/description/tags เดิม · คืนแค่บริบท 3 บรรทัดรอบจุดแก้
+func (s *Store) Edit(target, find, replace string) (Note, string, error) {
+	if find == "" {
+		return Note{}, "", fmt.Errorf("edit %q: find is empty", target)
+	}
+	var src Note
+	if s.Has(target) {
+		src, _ = s.Get(target)
+		if src.Mode != "replace" {
+			return Note{}, "", fmt.Errorf("edit %q: temp note exists with mode append (a new section, not the whole note) — blm_patch it instead", target)
+		}
+	} else {
+		folder, ok := s.FindTargetFolder(target)
+		if !ok {
+			return Note{}, "", fmt.Errorf("edit %q: not found in mirror or temp — use blm_save to create it", target)
+		}
+		raw, err := os.ReadFile(filepath.Join(s.MirrorDir, folder, target+".md"))
+		if err != nil {
+			return Note{}, "", err
+		}
+		src = parseNote(target, string(raw))
+		src.Target, src.Mode = target, "replace"
+		if src.Folder == "" {
+			src.Folder = folder
+		}
+	}
+	if hits := strings.Count(src.Content, find); hits != 1 {
+		return Note{}, "", fmt.Errorf("edit %q: find matched %d times, must match exactly once", target, hits)
+	}
+	content := strings.Replace(src.Content, find, replace, 1)
+	n, err := s.save(Input{Name: target, Target: target, Mode: "replace", Folder: src.Folder, Description: src.Description, Tags: src.Tags, Content: content, HasContent: true}, "patch")
+	if err != nil {
+		return Note{}, "", err
+	}
+	return n, contextAround(content, replace, 3), nil
+}
+
+// contextAround บรรทัดรอบข้อความ (สำหรับให้ agent เห็นว่าแก้ถูกที่ โดยไม่ต้องอ่านทั้งโน้ต)
+func contextAround(content, needle string, lines int) string {
+	idx := strings.Index(content, needle)
+	if idx < 0 {
+		return ""
+	}
+	all := strings.Split(content, "\n")
+	line := strings.Count(content[:idx], "\n")
+	from, to := line-lines, line+strings.Count(needle, "\n")+lines
+	if from < 0 {
+		from = 0
+	}
+	if to >= len(all) {
+		to = len(all) - 1
+	}
+	var out []string
+	for i := from; i <= to; i++ {
+		out = append(out, fmt.Sprintf("%4d  %s", i+1, all[i]))
+	}
+	return strings.Join(out, "\n")
 }
