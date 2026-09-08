@@ -450,7 +450,7 @@ func tsAliases(root string) map[string]string {
 	if err != nil {
 		return out
 	}
-	clean := regexp.MustCompile(`(?m)//.*$|/\*[\s\S]*?\*/`).ReplaceAllString(string(raw), "")
+	clean := stripJSONC(string(raw))
 	clean = regexp.MustCompile(`,\s*([}\]])`).ReplaceAllString(clean, "$1")
 	var cfg struct {
 		CompilerOptions struct {
@@ -614,5 +614,45 @@ func RenderGraph(g Graph) string {
 		rows = append(rows, []string{c.Dir, fmt.Sprintf("%d", c.Files), fmt.Sprintf("%d", c.Symbols), fmt.Sprintf("%d/%d/%d", c.Internal, c.Inbound, c.Outbound), top})
 	}
 	b.WriteString(Table([]string{"Dir", "Files", "Syms", "Int/In/Out", "Top symbols"}, rows) + "\n")
+	return b.String()
+}
+
+// stripJSONC ตัด // และ /* */ เฉพาะนอก string — regex ธรรมดาเห็น "@/*" ใน paths เป็นจุดเริ่ม comment แล้วกินถึง "**/*.ts" (บั๊ก 2026-09-09
+// ทำให้ alias @/ หายทั้งโปรเจ็ค hubs จึงไม่มี db.ts/session.ts)
+func stripJSONC(src string) string {
+	var b strings.Builder
+	inStr, esc := false, false
+	for i := 0; i < len(src); i++ {
+		c := src[i]
+		if inStr {
+			b.WriteByte(c)
+			if esc {
+				esc = false
+			} else if c == '\\' {
+				esc = true
+			} else if c == '"' {
+				inStr = false
+			}
+			continue
+		}
+		switch {
+		case c == '"':
+			inStr = true
+			b.WriteByte(c)
+		case c == '/' && i+1 < len(src) && src[i+1] == '/':
+			for i < len(src) && src[i] != '\n' {
+				i++
+			}
+			b.WriteByte('\n')
+		case c == '/' && i+1 < len(src) && src[i+1] == '*':
+			i += 2
+			for i+1 < len(src) && !(src[i] == '*' && src[i+1] == '/') {
+				i++
+			}
+			i++
+		default:
+			b.WriteByte(c)
+		}
+	}
 	return b.String()
 }

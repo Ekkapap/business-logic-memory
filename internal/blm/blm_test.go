@@ -232,7 +232,7 @@ func TestGraphBuildAndQuery(t *testing.T) {
 		_ = os.MkdirAll(filepath.Dir(filepath.Join(root, p)), 0o755)
 		_ = os.WriteFile(filepath.Join(root, p), []byte(body), 0o644)
 	}
-	w("tsconfig.json", `{"compilerOptions": {"paths": {"@/*": ["./src/*"]}}} // trailing comment`)
+	w("tsconfig.json", `{"compilerOptions": { /* block */ "paths": {"@/*": ["./src/*"]}}, "include": ["**/*.ts"]} // trailing comment`)
 	w("src/lib/auth/session.ts", "export function createSession() {}\nexport const SESSION_TTL = 1\n")
 	w("src/lib/auth/login.ts", "import { createSession } from '@/lib/auth/session';\nimport x from './helpers'\nexport async function requestLogin() {}\n")
 	w("src/lib/auth/helpers.ts", "export const h = 1\n")
