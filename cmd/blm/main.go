@@ -20,6 +20,7 @@ const usage = `blm <command> [args]
   init [path] [--agentsroom | --obsidian | --dir <p> --backend <cli>] [--tools a,b] [--docker] [--no-plugin] [--sandbox] [--marketplace <dir|owner/repo>]
                                   run inside the project root · --tools installs the listed tools when missing (--docker = socraticode via Docker) · --force skips the project-root check
   status [--json]                 readiness, paths, rules, temp notes, tools, stats
+  scan [path] [--json]            survey the repo: sizes, token estimate, sub-projects (candidate main topics)
   report [name] [--json]          latest report
   tools <action> [--docker] [tool] status|get|install|start|stop|restart|gen-graph|help  (socraticode|obsidian|graphify)
   sync --push|--pull [--apply] [--author a] [--role r] [--delete a,b]   plan, or with --apply push everything to AgentsRoom in parallel (no agent involved)
@@ -84,6 +85,12 @@ func run(cmd string, args []string) error {
 	switch cmd {
 	case "status":
 		res, err = srv.Call("blm_status", nil2map(nil))
+	case "scan":
+		a := map[string]any{}
+		if len(rest) > 0 {
+			a["path"] = rest[0]
+		}
+		res, err = srv.Call("blm_scan", a)
 	case "report":
 		a := map[string]any{}
 		if len(rest) > 0 {

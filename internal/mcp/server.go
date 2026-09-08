@@ -60,6 +60,8 @@ func tools(c blm.Config) []tool {
 		{"blm_delete", "Delete a temp note (the previous version is snapshotted to history/)", obj(map[string]any{"name": noteProps["name"]}, "name")},
 		{"blm_edit", "Edit a few lines of an EXISTING backend note without reading it: blm loads the note from the local mirror (or the pending draft), replaces `find` with `replace` (must match exactly once) and stores the whole result as a replace-draft in temp. Returns only 3 lines of context around the change. Push later with blm_sync. Use this instead of memory_get + memory_save.",
 			obj(map[string]any{"target": str("backend note name (e.g. line-login-linking)"), "find": str("exact text to replace (must occur once)"), "replace": str("new text")}, "target", "find", "replace")},
+		{"blm_scan", "Survey the repo before /blm_init: file/byte/token totals with .gitignore + .socraticodeignore + .ignorememory applied, per-top-dir stats, memory note count, and SUB-PROJECTS (folders with their own go.mod/package.json/PLANNING.md/… — propose each as its own main topic). Generic: no project names hard-coded. Warns when the whole tree exceeds the token budget.",
+			obj(map[string]any{"path": str("sub path to survey (omit = whole project)"), "tokenWarn": map[string]any{"type": "number", "description": "warn above this many tokens (default 200000)"}})},
 		{"blm_status", "Everything at once: readiness, binary/project paths, backend/store/mirror, rules file (topics/rules, last read), temp notes + size, history/reports, configured neighbour tools and rtk-gain-style stats — returns `terminal` ready to print", obj(map[string]any{})},
 		{"blm_report", "With rows: compose and save a rules check report (the tool aligns columns by real monospace width, writes reports/<date>-businesslogic.md, records a check stat) and returns `terminal` to print verbatim · without rows: read the latest report (filter by name)",
 			obj(map[string]any{
@@ -156,6 +158,10 @@ func (s *Server) Call(name string, a map[string]any) (any, error) {
 			return nil, err
 		}
 		return map[string]any{"ok": true, "draft": n.Name, "mode": n.Mode, "folder": n.Folder, "bytes": len(n.Content), "context": ctx, "next": "push with blm_sync {apply:true} when the owner says update memory"}, nil
+	case "blm_scan":
+		tw, _ := a["tokenWarn"].(float64)
+		r := blm.ScanRepo(s.root, getStr(a, "path"), int64(tw))
+		return map[string]any{"scan": r, "terminal": blm.RenderScan(r)}, nil
 	case "blm_status":
 		st := s.store.Status(s.cfg)
 		return map[string]any{"status": st, "terminal": blm.RenderStatus(st)}, nil

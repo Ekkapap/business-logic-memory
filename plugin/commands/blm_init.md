@@ -6,7 +6,7 @@ argument-hint: [path ย่อยที่จะวิเคราะห์ — 
 เป้าหมาย: ได้ไฟล์กฎ `blm.md` ที่เจ้าของยอมรับ ไม่ใช่ที่คุณเดา ทำทีละขั้น **หยุดรอคำตอบทุกขั้น** ถามเป็นประโยคธรรมดา ไม่ใช้ option list
 
 0. เรียก `blm_status` ดู backend/store และว่ามี `blm.md` อยู่แล้วไหม (มีแล้ว = โหมดปรับปรุง เริ่มจากอ่านด้วย `blm` ก่อน)
-1. **สำรวจ** เฉพาะ "$ARGUMENTS" (ว่าง = ทั้ง root) โดยข้าม path ตาม `.gitignore` + `.socraticodeignore` + `.ignorememory` (รวมกันทั้งสามไฟล์) และโฟลเดอร์จุด
+1. **สำรวจ** เริ่มด้วย `blm_scan { path: "$ARGUMENTS" }` (ว่าง = ทั้ง root) — tool รวม ignore ทั้งสามไฟล์ นับขนาด/token ต่อโฟลเดอร์ และคืน `subProjects` (โฟลเดอร์ที่มี marker ของตัวเอง) ซึ่งแต่ละตัวคือผู้สมัครหัวข้อหลักแยก · จากนั้นเจาะรายโฟลเดอร์ตามผล
    - ใช้เครื่องมือที่มีตามลำดับ: SocratiCode (`codebase_about` / `codebase_search`) > Obsidian vault (โน้ตในโปรเจ็ค) > graphify (`graphify-out/graph.json`) > Glob/Grep ธรรมดา — `blm_tools status` บอกว่ามีอะไร
    - SocratiCode: ค้น**ภาษาอังกฤษก่อน** (โค้ดและ memory note เขียนอังกฤษ ผลตรงกว่ามาก ทดสอบ 2026-09-09: "authentication login" ได้ทั้งไฟล์ตรรกะหลักและ memory note 3 ใบ ส่วนคำไทยได้แต่ข้อความ UI) ใช้ภาษาไทยเสริมเฉพาะเมื่อตามหาข้อความหน้าจอ/คอมเมนต์ไทย · ผลที่เป็น `.agentsroom/memory/**` คือจุดเริ่มอ่านที่ดีที่สุด
    - **โปรเจ็คย่อยในโฟลเดอร์เดียวกัน** (โฟลเดอร์ที่มี PLANNING.md / README / go.mod / package.json ของตัวเอง เช่น `wireguard/` ใน NPM-PORTAL) ไม่ใช่ noise ที่ต้องกรองทิ้ง — เป็น knowledge ของโปรเจ็คเหมือนกัน ให้เสนอเป็น**หัวข้อหลักแยก** ในตาราง Main Business (เช่น "Custom VPN (WireGuard, self-hosted)") พร้อมหัวข้อย่อยของมันเอง (เจ้าของกำหนด 2026-09-09) ใช้ `fileFilter` เพื่อแยกผลรายโฟลเดอร์ ไม่ใช่เพื่อตัดออก

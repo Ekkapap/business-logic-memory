@@ -174,3 +174,48 @@ func TestLoadFallback(t *testing.T) {
 		t.Fatalf("config: %+v", got)
 	}
 }
+
+func TestScanRepoSubProjects(t *testing.T) {
+	root := t.TempDir()
+	w := func(p, body string) {
+		_ = os.MkdirAll(filepath.Dir(filepath.Join(root, p)), 0o755)
+		_ = os.WriteFile(filepath.Join(root, p), []byte(body), 0o644)
+	}
+	w(".gitignore", "node_modules/\ndist/\n")
+	w(".socraticodeignore", "generated/\n")
+	w("package.json", "{}")
+	w("README.md", "# app")
+	w("src/a.ts", strings.Repeat("x", 400))
+	w("src/b.tsx", "y")
+	w("node_modules/big/index.js", strings.Repeat("z", 5000))
+	w("generated/out.ts", "q")
+	w("vpn/go.mod", "module vpn")
+	w("vpn/PLANNING.md", "# plan")
+	w("vpn/cmd/main.go", "package main")
+	w("vpn/cmd/README.md", "nested — must not be a second sub-project")
+	w(".agentsroom/memory/features/x.md", "note")
+	w(".claude/settings.json", "{}")
+	r := ScanRepo(root, "", 0)
+	if r.Files != 9 || r.Ignored < 2 { // dot-files (.gitignore …) ไม่นับ · node_modules/generated/.claude ถูกข้าม
+		t.Fatalf("files %d ignored %d (node_modules/generated/.claude must be skipped)", r.Files, r.Ignored)
+	}
+	if r.MemoryNotes != 1 {
+		t.Fatalf("memory notes %d", r.MemoryNotes)
+	}
+	if len(r.SubProjects) != 1 || r.SubProjects[0].Path != "vpn" || r.SubProjects[0].Files != 4 {
+		t.Fatalf("sub-projects %+v", r.SubProjects)
+	}
+	if !strings.Contains(strings.Join(r.SubProjects[0].Markers, ","), "PLANNING.md") {
+		t.Fatalf("markers %v", r.SubProjects[0].Markers)
+	}
+	if r.TokensApprox != r.Bytes/4 || r.Warning != "" {
+		t.Fatalf("tokens %d warning %q", r.TokensApprox, r.Warning)
+	}
+	if small := ScanRepo(root, "", 10); small.Warning == "" {
+		t.Fatal("token warning expected")
+	}
+	out := RenderScan(r)
+	if !strings.Contains(out, "vpn") || !strings.Contains(out, "Sub-projects") {
+		t.Fatal(out)
+	}
+}
