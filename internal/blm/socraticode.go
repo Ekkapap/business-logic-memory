@@ -254,6 +254,8 @@ func buildFromSocraticode(root string, fg scFileGraph, files map[string]*scFileP
 			}
 		}
 	}
+	// SocratiCode ทำกราฟเฉพาะโค้ด — markdown (memory mirror, docs) เติมจาก local: หัวข้อเป็น symbols, ลิงก์เป็น edge kind link (เจ้าของ 2026-09-09: โน้ตทุกฉบับคือชิ้นส่วนสำหรับสกัด business logic)
+	markdownPass(root, nodes, addEdge)
 	g := Graph{Root: root, BuiltAt: time.Now().UTC().Format(time.RFC3339), Engine: "socraticode", Calls: calls, Files: len(nodes)}
 	var paths []string
 	for p := range nodes {

@@ -566,6 +566,70 @@ func resolvePy(from, mod string, nodes map[string]*GraphNode) string {
 	return ""
 }
 
+// markdownPass เดินหา .md ทั้งโปรเจ็ค (ignore เดียวกับ scan) เพิ่ม node ที่ยังไม่มี ใส่หัวข้อเป็น symbols แล้วเชื่อมลิงก์ระหว่างไฟล์ผ่าน addEdge
+// อ่าน+parse ขนานทุกคอร์ merge ตามลำดับ · ใช้เติมกราฟจาก engine ที่ไม่รู้จัก markdown (SocratiCode)
+func markdownPass(root string, nodes map[string]*GraphNode, addEdge func(from, to, kind string)) {
+	ig, _ := loadIgnores(root)
+	var files []string
+	_ = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		rel, _ := filepath.Rel(root, p)
+		rel = filepath.ToSlash(rel)
+		if rel == "." {
+			return nil
+		}
+		if d.IsDir() {
+			if strings.HasPrefix(d.Name(), ".") && rel != ".agentsroom" && !strings.HasPrefix(rel, ".agentsroom/memory") {
+				return filepath.SkipDir
+			}
+			if rel != ".agentsroom" && ig.match(rel, true) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.HasPrefix(d.Name(), ".") || langOf(d.Name()) != "md" || ig.match(rel, false) {
+			return nil
+		}
+		if info, err := d.Info(); err != nil || info.Size() > 1<<20 {
+			return nil
+		}
+		files = append(files, rel)
+		if nodes[rel] == nil {
+			nodes[rel] = &GraphNode{Path: rel, Lang: "md"}
+		}
+		return nil
+	})
+	sort.Strings(files)
+	type parsed struct{ heads, targets []string }
+	results := make([]parsed, len(files))
+	forEach(len(files), Workers(), func(i int) {
+		raw, err := os.ReadFile(filepath.Join(root, files[i]))
+		if err != nil {
+			return
+		}
+		src := string(raw)
+		heads := matchAll(reMDHead, src)
+		if len(heads) > 8 {
+			heads = heads[:8]
+		}
+		var targets []string
+		for _, m := range reMDLink.FindAllStringSubmatch(src, -1) {
+			if t := resolveMD(files[i], firstNonEmpty(m[1:]), nodes); t != "" {
+				targets = append(targets, t)
+			}
+		}
+		results[i] = parsed{heads, targets}
+	})
+	for i, rel := range files {
+		nodes[rel].Symbols = results[i].heads
+		for _, t := range results[i].targets {
+			addEdge(rel, t, "link")
+		}
+	}
+}
+
 func resolveMD(from, target string, nodes map[string]*GraphNode) string {
 	if strings.Contains(target, "://") {
 		return ""

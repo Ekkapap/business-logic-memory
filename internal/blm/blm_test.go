@@ -295,8 +295,13 @@ func TestBuildFromSocraticode(t *testing.T) {
 	_ = json.Unmarshal([]byte(`{"filePayload":{"file":"src/lib/auth/session.ts","language":"typescript","symbols":[{"name":"<module>","kind":"module","line":1},{"name":"createSession","kind":"function","line":10},{"name":"x","kind":"variable","line":1}],"outgoingCalls":[{"calleeName":"sql","calleeCandidates":["src/lib/db.ts::sql#3"],"kind":"call"},{"calleeName":"md","calleeCandidates":["docs/a.md::x#1"],"kind":"call"},{"calleeName":"log","calleeCandidates":[],"kind":"call"},{"calleeName":"dup","calleeCandidates":["a.ts::dup#1","b.ts::dup#2"],"kind":"call"}]}}`), &pt)
 	p := pt.FilePayload
 	files["src/lib/auth/session.ts"] = &p
-	g := buildFromSocraticode("/r", fg, files)
-	if g.Engine != "socraticode" || g.Files != 3 || len(g.Edges) != 2 || g.Calls != 2 {
+	root := t.TempDir()
+	_ = os.MkdirAll(filepath.Join(root, "docs"), 0o755)
+	_ = os.WriteFile(filepath.Join(root, "docs", "a.md"), []byte("# Auth\nsee [[b]]\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(root, "docs", "b.md"), []byte("# Sessions\n"), 0o644)
+	g := buildFromSocraticode(root, fg, files)
+	// docs/b.md มาจาก markdown pass (ไม่อยู่ในกราฟ SocratiCode) + link a→b → 4 ไฟล์ 3 edges
+	if g.Engine != "socraticode" || g.Files != 4 || len(g.Edges) != 3 || g.Calls != 2 || len(g.DocHubs) != 2 {
 		// sql → db.ts ยกระดับ import edge เดิมเป็น call · md → docs/a.md เป็น call edge ใหม่ → นับ 2
 		t.Fatalf("%+v", g)
 	}
