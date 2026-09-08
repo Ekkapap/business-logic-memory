@@ -184,16 +184,21 @@ func (s *Server) Call(name string, a map[string]any) (any, error) {
 				return nil, err
 			}
 		}
-		if q := getStr(a, "query"); q != "" {
-			lim, _ := a["limit"].(float64)
-			hits := blm.GraphQuery(g, q, int(lim))
-			return map[string]any{"query": q, "hits": hits, "builtAt": g.BuiltAt}, nil
-		}
 		var htmlPath string
 		if h, _ := a["html"].(bool); h {
 			htmlPath, _ = s.store.WriteGraphHTML(g)
 		}
-		res := map[string]any{"html": htmlPath, "summary": map[string]any{"engine": g.Engine, "builtAt": g.BuiltAt, "files": g.Files, "edges": len(g.Edges), "callEdges": g.Calls, "unlinked": g.Unlinked, "hubs": g.Hubs, "clusters": blm.ClustersHead(g.Clusters, 25)}, "terminal": blm.RenderGraph(g)}
+		if q := getStr(a, "query"); q != "" {
+			lim, _ := a["limit"].(float64)
+			hits := blm.GraphQuery(g, q, int(lim))
+			return map[string]any{"query": q, "hits": hits, "builtAt": g.BuiltAt, "html": htmlPath}, nil
+		}
+		// summary ย่อ (ฉบับเต็มอยู่ใน graph.json / terminal) — ตอบ MCP ~6k token เมื่อส่งทั้ง 25 clusters
+		hubs := g.Hubs
+		if len(hubs) > 10 {
+			hubs = hubs[:10]
+		}
+		res := map[string]any{"html": htmlPath, "summary": map[string]any{"engine": g.Engine, "builtAt": g.BuiltAt, "files": g.Files, "edges": len(g.Edges), "callEdges": g.Calls, "unlinked": g.Unlinked, "hubs": hubs, "docHubs": g.DocHubs, "clusters": blm.ClustersHead(g.Clusters, 12), "graphJson": s.cfg.Store + "/graph.json"}, "terminal": blm.RenderGraph(g)}
 		if g.Engine != "ast-grep" {
 			res["hint"] = "coarse regex mode — no tree-sitter on this machine. Ask the owner: `blm tools install tree-sitter` (ast-grep) for a real AST + call graph; for meaning either `blm tools install embedding` (Ollama, native or --docker) or infer meaning yourself from the code you read"
 		}
