@@ -34,22 +34,23 @@ type BackendStatus struct {
 }
 
 type Status struct {
-	Root        string        `json:"root"`
-	Backend     Backend       `json:"backend"`
-	Store       string        `json:"store"`
-	Mirror      string        `json:"mirror,omitempty"`
-	RulesFile   string        `json:"rulesFile,omitempty"`
-	Topics      int           `json:"topics"`
-	Rules       int           `json:"rules"`
-	LastReadAt  string        `json:"lastReadAt,omitempty"`
-	Notes       []Note        `json:"notes"`
-	NotesBytes  int64         `json:"notesBytes"`
-	History     int           `json:"history"`
-	Reports     int           `json:"reports"`
-	Tools       []ToolStatus  `json:"tools"`
-	BackendInfo BackendStatus `json:"backendInfo"`
-	Gain        Gain          `json:"gain"`
-	ConfigFound bool          `json:"configFound"`
+	Root        string           `json:"root"`
+	Backend     Backend          `json:"backend"`
+	Store       string           `json:"store"`
+	Mirror      string           `json:"mirror,omitempty"`
+	RulesFile   string           `json:"rulesFile,omitempty"`
+	Topics      int              `json:"topics"`
+	Rules       int              `json:"rules"`
+	LastReadAt  string           `json:"lastReadAt,omitempty"`
+	Notes       []Note           `json:"notes"`
+	Conflicts   []ConflictReport `json:"conflicts"`
+	NotesBytes  int64            `json:"notesBytes"`
+	History     int              `json:"history"`
+	Reports     int              `json:"reports"`
+	Tools       []ToolStatus     `json:"tools"`
+	BackendInfo BackendStatus    `json:"backendInfo"`
+	Gain        Gain             `json:"gain"`
+	ConfigFound bool             `json:"configFound"`
 	// readiness (เจ้าของ 2026-09-09: status ต้องบอกก่อนว่า "ทำงานได้ ติดต่อได้ พร้อมทำงาน")
 	Ready         bool     `json:"ready"`
 	Problems      []string `json:"problems"`
@@ -59,7 +60,7 @@ type Status struct {
 }
 
 func (s *Store) Status(c Config) Status {
-	st := Status{Root: s.Root, Backend: c.Backend, Store: c.Store, Mirror: c.Mirror, Notes: []Note{}, Gain: s.GainSummary(), Problems: []string{}}
+	st := Status{Root: s.Root, Backend: c.Backend, Store: c.Store, Mirror: c.Mirror, Notes: []Note{}, Conflicts: s.ListConflicts(), Gain: s.GainSummary(), Problems: []string{}}
 	_, err := os.Stat(filepath.Join(s.Root, ConfigFile))
 	st.ConfigFound = err == nil
 	st.Binary, _ = os.Executable()
@@ -416,6 +417,27 @@ func RenderStatus(st Status) string {
 		b.WriteString(Table([]string{"#", "Name", "Target", "Mode", "State", "Updated"}, tr) + "\n")
 	} else {
 		b.WriteString("none\n")
+	}
+	if len(st.Conflicts) > 0 {
+		var tr [][]string
+		wait := 0
+		for _, c := range st.Conflicts {
+			state := Green("done")
+			if c.Status == "wait" {
+				wait++
+				state = Yellow("wait")
+				if c.Chosen == "" {
+					state += Dim(" · not ticked")
+				} else if c.Chosen == "both" {
+					state += Red(" · both ticked")
+				} else {
+					state += " · " + c.Chosen + " ticked → resolve"
+				}
+			}
+			tr = append(tr, []string{"#" + itoa(c.ID), state, c.Topic + " › " + c.Heading, c.Draft, filepath.Base(c.File)})
+		}
+		b.WriteString(Section(fmt.Sprintf("Conflicts  (%d waiting for the owner · blm conflicts / blm resolve <note>)", wait)) + "\n")
+		b.WriteString(Table([]string{"Id", "State", "blm.md topic › subtopic", "Note", "Report"}, tr) + "\n")
 	}
 
 	b.WriteString(Section("Tools  (code/repo analysis — cut agent token usage)") + "\n")
