@@ -272,7 +272,7 @@ func TestGraphBuildAndQuery(t *testing.T) {
 		t.Fatalf("hubs %+v", g.Hubs)
 	}
 	hits := GraphQuery(g, "session", 5)
-	if len(hits) == 0 || hits[0].Path != "src/lib/auth/session.ts" || len(hits[0].ImportedBy) != 1 || hits[0].Symbols[0] != "createSession" {
+	if len(hits) == 0 || hits[0].Path != "src/lib/auth/session.ts" || len(hits[0].UsedBy) != 1 || hits[0].Symbols[0] != "createSession" {
 		t.Fatalf("query: %+v", hits)
 	}
 	if _, ok := s.LoadGraph(); !ok {

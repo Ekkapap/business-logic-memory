@@ -171,7 +171,13 @@ func RunAstGrep(bin, root string, files []string) map[string]*AstFacts {
 				case "def":
 					f.Defs = append(f.Defs, v)
 				case "call":
-					f.Calls = append(f.Calls, v)
+					// `store.NewToken` / `auth.login` → ชื่อท้ายสุด เพื่อจับคู่กับ definition (owner คือไฟล์ที่นิยามชื่อนั้น)
+					if i := strings.LastIndex(v, "."); i >= 0 {
+						v = v[i+1:]
+					}
+					if v != "" {
+						f.Calls = append(f.Calls, v)
+					}
 				}
 			}
 		}

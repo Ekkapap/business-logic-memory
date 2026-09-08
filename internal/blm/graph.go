@@ -273,10 +273,11 @@ func (s *Store) LoadGraph() (Graph, bool) {
 
 // GraphQuery ค้นไฟล์/symbol ที่มีคำนี้ แล้วคืนพร้อมเพื่อนบ้าน (ใครเรียก / เรียกใคร) — ตัดที่ limit ผลลัพธ์
 type GraphHit struct {
-	Path       string   `json:"path"`
-	Symbols    []string `json:"symbols,omitempty"`
-	ImportedBy []string `json:"importedBy,omitempty"`
-	Imports    []string `json:"imports,omitempty"`
+	Path    string   `json:"path"`
+	Symbols []string `json:"symbols,omitempty"`
+	// UsedBy / Uses รวมทั้ง import และ call (AST mode) — ใครพึ่งไฟล์นี้ และไฟล์นี้พึ่งใคร
+	UsedBy []string `json:"usedBy,omitempty"`
+	Uses   []string `json:"uses,omitempty"`
 }
 
 func GraphQuery(g Graph, query string, limit int) []GraphHit {
@@ -301,7 +302,7 @@ func GraphQuery(g Graph, query string, limit int) []GraphHit {
 		if len(syms) == 0 && !strings.Contains(strings.ToLower(n.Path), q) {
 			continue
 		}
-		hits = append(hits, GraphHit{Path: n.Path, Symbols: head(syms, 8), ImportedBy: head(in[n.Path], 8), Imports: head(out[n.Path], 8)})
+		hits = append(hits, GraphHit{Path: n.Path, Symbols: head(syms, 8), UsedBy: head(in[n.Path], 8), Uses: head(out[n.Path], 8)})
 	}
 	// ไฟล์ที่ถูกเรียกมากอยู่ก่อน = แกนของเรื่องนั้น
 	sort.Slice(hits, func(i, j int) bool { return len(in[hits[i].Path]) > len(in[hits[j].Path]) })
