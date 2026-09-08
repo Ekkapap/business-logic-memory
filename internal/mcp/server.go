@@ -84,6 +84,7 @@ func tools(c blm.Config) []tool {
 				"delete":    strArr("backend notes to delete after the push (e.g. an old name after a rename; with apply)"),
 				"done":      strArr("manual mode only: temp notes already pushed successfully → archive them"),
 				"names":     strArr("restrict the plan to these notes (omit = all)"),
+				"full":      map[string]any{"type": "boolean", "description": "manual mode only: include note bodies in the plan (default false — bodies stay out of your context)"},
 			})},
 	}
 	if !c.HasSync() {
@@ -210,12 +211,13 @@ func (s *Server) Call(name string, a map[string]any) (any, error) {
 			return nil, fmt.Errorf("backend %s has no sync target", s.cfg.Backend)
 		}
 		apply, _ := a["apply"].(bool)
-		return s.sync(getStr(a, "direction"), getArr(a, "done"), getArr(a, "names"), apply, getStr(a, "author"), getStr(a, "role"), getArr(a, "delete"))
+		full, _ := a["full"].(bool)
+		return s.sync(getStr(a, "direction"), getArr(a, "done"), getArr(a, "names"), apply, getStr(a, "author"), getStr(a, "role"), getArr(a, "delete"), full)
 	}
 	return nil, fmt.Errorf("unknown tool %s", name)
 }
 
-func (s *Server) sync(direction string, done, names []string, apply bool, author, role string, deletes []string) (any, error) {
+func (s *Server) sync(direction string, done, names []string, apply bool, author, role string, deletes []string, full bool) (any, error) {
 	if direction == "pull" {
 		if s.cfg.Backend == blm.BackendCustom {
 			return map[string]any{"command": s.cfg.PullCommand, "next": "run command via Bash, then read the rules again with blm"}, nil
@@ -309,6 +311,26 @@ func (s *Server) sync(direction string, done, names []string, apply bool, author
 		next = "every plan item targets a different note — issue ALL memory_save calls in parallel (one message, one tool call per plan[].memory_save, add author/role; AgentsRoom is slow, sequential calls multiply the wait), then call blm_sync again with done = plan[].from of the items that succeeded"
 	}
 	// รวมโน้ต target เดียวกันแล้ว → ทุกรายการคนละโน้ต ยิงพร้อมกันได้ (เจ้าของสั่ง 2026-09-09: memory_save ช้า ห้ามรอทีละตัว)
+	// เนื้อโน้ตไม่ส่งกลับ (มันจะเข้า context ของ agent) เว้นแต่ขอ full เพื่อทำมือ — ปกติใช้ apply:true ให้ blm ส่งเอง
+	if !full {
+		type brief struct {
+			Name         string   `json:"name"`
+			Mode         string   `json:"mode"`
+			Folder       string   `json:"folder,omitempty"`
+			Bytes        int      `json:"bytes"`
+			From         []string `json:"from"`
+			TargetExists bool     `json:"targetExists"`
+			Warnings     []string `json:"warnings"`
+		}
+		var briefs []brief
+		for _, it := range plan {
+			briefs = append(briefs, brief{it.MemorySave.Name, it.MemorySave.Mode, it.MemorySave.Folder, len(it.MemorySave.Content), it.From, it.TargetExists, it.Warnings})
+		}
+		if briefs == nil {
+			briefs = []brief{}
+		}
+		return map[string]any{"plan": briefs, "parallel": true, "next": "preview only — run blm_sync {apply:true, author, role} to push; pass full:true only if you must push by hand"}, nil
+	}
 	return map[string]any{"plan": plan, "parallel": true, "next": next}, nil
 }
 
