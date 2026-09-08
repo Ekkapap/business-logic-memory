@@ -282,7 +282,7 @@ func (s *Store) OpenConflict(name, topic, heading, reason string) ([]ConflictRep
 		if _, ok := noteHeads[lastHead]; !ok {
 			headOrder = append(headOrder, lastHead)
 		}
-		noteHeads[lastHead] = append(noteHeads[lastHead], tagFor(id, file))
+		noteHeads[lastHead] = append(noteHeads[lastHead], tagFor(len(noteHeads[lastHead])+1, file))
 		body := fmt.Sprintf(`---
 id: %d
 draft: %s
@@ -346,10 +346,11 @@ cloudUpdatedAt: %s
 	return reports, nil
 }
 
-// tagFor = ลิงก์ของเลขเดียว `[#n](<conflicts/[wait] report.md>)` relative จากโน้ตใน store · ป้ายเต็ม `[Conflict: [#1](…), [#2](…)]` (เจ้าของ 2026-09-09: แต่ละเลขคลิกแยก วงเล็บต้องเห็น)
-func tagFor(id int, reportPath string) string {
+// tagFor = ลิงก์หนึ่งตัว `[#n](<conflicts/[wait] report.md>)` relative จากโน้ตใน store · n = ลำดับภายในหัวข้อนั้น (เริ่ม #1 ทุกหัวข้อ) ไม่ใช่ id ของรายงาน
+// เจ้าของ 2026-09-09: ต้องการแค่ลิงก์สั้น อ่านแล้วรู้ว่าคนละไฟล์ · ป้ายเต็ม `[Conflict: [#1](…), [#2](…)]`
+func tagFor(n int, reportPath string) string {
 	// ปลายทางในวงเล็บแหลม (CommonMark) ใส่ช่องว่าง/วงเล็บเหลี่ยมได้ตรง ๆ — percent-encoding เปิดไม่ติดใน AgentsRoom (ทดสอบ 2026-09-09)
-	return "[#" + strconv.Itoa(id) + "](<conflicts/" + filepath.Base(reportPath) + ">)"
+	return "[#" + strconv.Itoa(n) + "](<conflicts/" + filepath.Base(reportPath) + ">)"
 }
 
 // tagLine ติดป้ายที่บรรทัดหัวข้อที่ตรงกับ head (เทียบหลังตัดป้ายเดิม) — ใช้กับหัวข้อในโน้ตที่ชน
@@ -386,7 +387,7 @@ func (s *Store) refreshRuleTags() {
 		if _, ok := groups[k]; !ok {
 			order = append(order, k)
 		}
-		groups[k] = append(groups[k], tagFor(c.ID, filepath.Join(s.Root, c.File)))
+		groups[k] = append(groups[k], tagFor(len(groups[k])+1, filepath.Join(s.Root, c.File)))
 	}
 	content := conflictTagRe.ReplaceAllString(rules.Content, "")
 	for _, k := range order {
@@ -487,7 +488,7 @@ func (s *Store) ResolveConflicts(name string) (map[string]any, error) {
 			if _, ok := byHead[c.NoteHeading]; !ok {
 				hOrder = append(hOrder, c.NoteHeading)
 			}
-			byHead[c.NoteHeading] = append(byHead[c.NoteHeading], tagFor(c.ID, filepath.Join(s.Root, c.File)))
+			byHead[c.NoteHeading] = append(byHead[c.NoteHeading], tagFor(len(byHead[c.NoteHeading])+1, filepath.Join(s.Root, c.File)))
 		}
 		for _, h := range hOrder {
 			content = tagLine(content, h, byHead[h])
