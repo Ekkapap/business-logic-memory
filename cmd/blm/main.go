@@ -25,6 +25,7 @@ const usage = `blm <command> [args]
   tools <action> [--docker] [tool] status|get|install|start|stop|restart|gen-graph|help  (socraticode|obsidian|graphify)
   sync --push|--pull [--apply] [--parallel] [--author a] [--role r] [--delete a,b]   plan, or with --apply push to AgentsRoom one by one (--parallel = all at once)
   edit <target> <find> <replace>  edit lines of a backend note locally (mirror → draft), push later with sync
+  diff <name> · merge <name> mine|cloud|content [file]   see what changed on the cloud vs your draft, then resolve
   get <name> · save <name> <file|-> [--target t] [--mode m] [--folder f] [--description d] · update … · patch <name> <find> <replace> · delete <name>
   path                            add the blm folder to the user's PATH (prints the command if it cannot)
   guard                           PreToolUse hook: reads JSON on stdin, denies Bash writes inside the store
@@ -151,6 +152,26 @@ func run(cmd string, args []string) error {
 			}
 		}
 		res, err = srv.Call("blm_"+cmd, a)
+		asJSON = true
+	case "diff":
+		if len(rest) < 1 {
+			return fmt.Errorf("blm diff <name>")
+		}
+		res, err = srv.Call("blm_diff", map[string]any{"name": rest[0]})
+		asJSON = true
+	case "merge":
+		if len(rest) < 2 {
+			return fmt.Errorf("blm merge <name> mine|cloud|content [file|-]")
+		}
+		a := map[string]any{"name": rest[0], "keep": rest[1]}
+		if len(rest) > 2 {
+			c, rerr := readContent(rest[2])
+			if rerr != nil {
+				return rerr
+			}
+			a["content"] = c
+		}
+		res, err = srv.Call("blm_merge", a)
 		asJSON = true
 	case "edit":
 		if len(rest) < 3 {

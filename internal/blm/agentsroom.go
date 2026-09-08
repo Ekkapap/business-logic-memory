@@ -243,6 +243,18 @@ func (s *Store) PushAll(c *Client, plan []SyncItem, author, role string, deletes
 	start := time.Now().UTC().Add(-2 * time.Second).Format(time.RFC3339)
 	results := make([]PushResult, len(plan))
 	deleted := make([]PushResult, len(deletes))
+	// ก่อนส่ง: ร่าง replace ที่มี base ต้องไม่เก่ากว่า cloud (คนอื่นแก้ระหว่างร่างค้าง) — ชนแล้วไม่ส่ง ให้เจ้าของดู blm_diff/blm_merge
+	before, _ := c.ListNotes()
+	skip := map[int]bool{}
+	for i, item := range plan {
+		if item.MemorySave.Mode != "replace" || item.Base == "" {
+			continue
+		}
+		if n, ok := before[item.MemorySave.Name]; ok && n.UpdatedAt > item.Base {
+			skip[i] = true
+			results[i] = PushResult{Name: item.MemorySave.Name, Mode: item.MemorySave.Mode, From: item.From, Error: "conflict: cloud updated " + n.UpdatedAt + " after the draft base " + item.Base + " — run blm_diff then blm_merge; draft kept"}
+		}
+	}
 	save := func(i int, item SyncItem) {
 		t := time.Now()
 		text, err := c.CallTool("memory_save", saveArgs(item, author, role))
@@ -270,6 +282,9 @@ func (s *Store) PushAll(c *Client, plan []SyncItem, author, role string, deletes
 	if parallel {
 		var wg sync.WaitGroup
 		for i, item := range plan {
+			if skip[i] {
+				continue
+			}
 			wg.Add(1)
 			go func(i int, item SyncItem) { defer wg.Done(); save(i, item) }(i, item)
 		}
@@ -280,7 +295,9 @@ func (s *Store) PushAll(c *Client, plan []SyncItem, author, role string, deletes
 		wg.Wait()
 	} else {
 		for i, item := range plan {
-			save(i, item)
+			if !skip[i] {
+				save(i, item)
+			}
 		}
 		for i, name := range deletes {
 			del(i, name)
@@ -297,6 +314,9 @@ func (s *Store) PushAll(c *Client, plan []SyncItem, author, role string, deletes
 		return results, deleted
 	}
 	for i := range results {
+		if skip[i] {
+			continue
+		}
 		n, ok := listed[results[i].Name]
 		results[i].Verified = ok && n.UpdatedAt >= start
 		if !results[i].Verified {

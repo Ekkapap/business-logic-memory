@@ -39,7 +39,7 @@ description: How to record project knowledge during a session without blocking o
 ## ตอนเจ้าของสั่ง "update memory" (มีเฉพาะ backend ที่มีปลายทาง: agentsroom/custom)
 
 1. `blm_sync { apply: true, author: "<ชื่อคุณ>", role: "<role id>" }` — **blm ทำเองทั้งหมด**: spawn AgentsRoom MCP, ยิง `memory_save` ทีละตัว (AgentsRoom รับขนานได้ตัวเดียว พิสูจน์ 2026-09-09) ตรวจด้วย `memory_list` ครั้งเดียว archive เฉพาะที่ยืนยันแล้วไป `.synced/` คืน ok/verified/error ต่อโน้ต ไม่ retry เอง เนื้อโน้ตไม่ผ่าน context ของคุณเลย (เจ้าของกำหนด 2026-09-09) · ใส่ `delete: ["ชื่อเก่า"]` เมื่อโน้ตถูกเปลี่ยนชื่อ (เช่น `project-business-logic` → `blm`)
-2. อ่าน `warnings` และรายการ `failed` ถ้ามี — รายการที่ล้มยังอยู่ใน temp เรียกซ้ำได้ด้วย `names`
+2. อ่าน `warnings` และรายการ `failed` ถ้ามี — รายการที่ล้มยังอยู่ใน temp เรียกซ้ำได้ด้วย `names` · error ที่ขึ้นต้น `conflict:` = มีคนแก้โน้ตบน cloud หลังร่างถูกสร้าง → `blm_diff {name}` ดูบรรทัดที่ต่างทั้งสองฝั่ง แล้วให้เจ้าของเลือก `blm_merge {name, keep: mine|cloud|content}` (mine = ใส่การแก้ของเราทับ cloud ปัจจุบันแบบ 3 ทาง ชนกันจะปฏิเสธ · content = รวมมือ) ห้ามตัดสินเองว่าฝั่งไหนชนะ
 3. ห้ามเรียก `memory_save` เองแทนขั้นตอนนี้ เว้นแต่ `blm_sync` ตอบว่าไม่พบ AgentsRoom MCP ใน `.mcp.json` (เปิดโปรเจ็คใน AgentsRoom หนึ่งครั้งให้มันเขียน) ค่อยใช้แผนจาก `blm_sync` (ไม่ใส่ apply) ยิงขนานเอง
 - `blm_sync { direction: "pull", apply: true }` ก่อนอ่านกฎเมื่อสงสัยว่า mirror เก่า (blm เรียก `memory_list` ให้ mirror สดเอง)
 - backend none/obsidian: ไม่มี `blm_sync` เลย — ไฟล์ใน store คือของจริง

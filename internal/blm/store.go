@@ -21,13 +21,15 @@ type Note struct {
 	Description string   `json:"description,omitempty"`
 	Tags        []string `json:"tags,omitempty"`
 	UpdatedAt   string   `json:"updatedAt"`
-	Content     string   `json:"content"`
+	// Base = updatedAt ของโน้ตปลายทาง (จาก mirror) ตอนที่ร่าง replace นี้ถูกสร้าง — ใช้ตรวจว่า cloud เปลี่ยนไปหลังจากนั้นไหม
+	Base    string `json:"base,omitempty"`
+	Content string `json:"content"`
 }
 
 // Input ค่าที่ agent ส่งมา — ช่องว่างหมายถึง "คงของเดิม"
 type Input struct {
-	Name, Content, Target, Mode, Folder, Description string
-	Tags                                             []string
+	Name, Content, Target, Mode, Folder, Description, Base string
+	Tags                                                   []string
 	// HasContent แยก "ไม่ส่ง content" จาก "ส่ง content ว่าง"
 	HasContent bool
 }
@@ -160,6 +162,7 @@ func (s *Store) save(in Input, action string) (Note, error) {
 		Description: pick(in.Description, prev.Description, ""),
 		Tags:        in.Tags,
 		UpdatedAt:   time.Now().UTC().Format(time.RFC3339),
+		Base:        pick(in.Base, prev.Base, ""),
 		Content:     prev.Content,
 	}
 	if n.Tags == nil && hadPrev {
@@ -263,6 +266,8 @@ type SyncItem struct {
 	TargetExists bool     `json:"targetExists"`
 	Warnings     []string `json:"warnings"`
 	Command      string   `json:"command,omitempty"`
+	// Base = updatedAt ของ cloud ตอนสร้างร่าง (เฉพาะ replace ที่มาจาก blm_edit) ใช้ตรวจ conflict ก่อน push
+	Base string `json:"base,omitempty"`
 }
 
 type SaveArgs struct {
@@ -292,7 +297,7 @@ func (s *Store) PlanSync(notes []Note) []SyncItem {
 		item := SyncItem{TargetExists: exists, Warnings: []string{}}
 		mode, modes := "append", map[string]bool{}
 		var parts, from []string
-		var desc, folder string
+		var desc, folder, base string
 		tagSet, tags := map[string]bool{}, []string{}
 		for _, n := range g {
 			modes[n.Mode] = true
@@ -303,6 +308,9 @@ func (s *Store) PlanSync(notes []Note) []SyncItem {
 			}
 			if n.Folder != "" {
 				folder = n.Folder
+			}
+			if n.Base != "" {
+				base = n.Base
 			}
 			for _, t := range n.Tags {
 				if !tagSet[t] {
@@ -332,6 +340,7 @@ func (s *Store) PlanSync(notes []Note) []SyncItem {
 			item.MemorySave.Tags = nil
 		}
 		item.From = from
+		item.Base = base
 		plan = append(plan, item)
 	}
 	return plan
@@ -341,6 +350,9 @@ func (s *Store) PlanSync(notes []Note) []SyncItem {
 
 func serializeNote(n Note) string {
 	meta := []string{"target: " + n.Target, "mode: " + n.Mode, "updatedAt: " + n.UpdatedAt}
+	if n.Base != "" {
+		meta = append(meta, "base: "+n.Base)
+	}
 	if n.Folder != "" {
 		meta = append(meta, "folder: "+n.Folder)
 	}
@@ -379,7 +391,15 @@ func splitFront(raw string) (map[string]string, int, string) {
 
 func parseNote(name, raw string) Note {
 	meta, _, body := splitFront(raw)
-	n := Note{Name: name, Target: meta["target"], Mode: meta["mode"], Folder: meta["folder"], UpdatedAt: meta["updatedAt"], Content: body}
+	// mirror ของ AgentsRoom เขียนค่าใน quote ("2026-09-02T00:00:00Z") ของ blm เองไม่มี quote — ถอดให้เท่ากันก่อนใช้เทียบเวลา
+	unq := func(v string) string {
+		var q string
+		if json.Unmarshal([]byte(v), &q) == nil {
+			return q
+		}
+		return v
+	}
+	n := Note{Name: name, Target: unq(meta["target"]), Mode: meta["mode"], Folder: meta["folder"], UpdatedAt: unq(meta["updatedAt"]), Base: unq(meta["base"]), Content: body}
 	if n.Target == "" {
 		n.Target = name
 	}
@@ -432,12 +452,16 @@ func (s *Store) Edit(target, find, replace string) (Note, string, error) {
 		if src.Folder == "" {
 			src.Folder = folder
 		}
+		// จำจุดตั้งต้น: updatedAt ของ mirror + สำเนาเนื้อหา (สำหรับ blm_diff 3 ทาง)
+		src.Base = src.UpdatedAt
+		_ = os.MkdirAll(filepath.Join(s.Dir, ".base"), 0o755)
+		_ = os.WriteFile(filepath.Join(s.Dir, ".base", target+".md"), []byte(src.Content), 0o644)
 	}
 	if hits := strings.Count(src.Content, find); hits != 1 {
 		return Note{}, "", fmt.Errorf("edit %q: find matched %d times, must match exactly once", target, hits)
 	}
 	content := strings.Replace(src.Content, find, replace, 1)
-	n, err := s.save(Input{Name: target, Target: target, Mode: "replace", Folder: src.Folder, Description: src.Description, Tags: src.Tags, Content: content, HasContent: true}, "patch")
+	n, err := s.save(Input{Name: target, Target: target, Mode: "replace", Folder: src.Folder, Description: src.Description, Tags: src.Tags, Content: content, HasContent: true, Base: src.Base}, "patch")
 	if err != nil {
 		return Note{}, "", err
 	}
