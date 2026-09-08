@@ -13,7 +13,7 @@ import (
 
 // Conflict workflow (เจ้าของกำหนด 2026-09-09): agent ตัดสินไม่ได้และเจ้าของยังไม่ตอบ (เช่น สั่งงานยาวแล้วไปนอน)
 // → เขียนสถานะ conflict ไว้ในร่าง blm.md ที่หัวข้อย่อย `[Conflict: #1, #2]` และออกรายงานต่อบริเวณที่ชน
-//   <store>/conflicts/<id>-<topic>-<heading>.wait.md  (สถานะอยู่ในชื่อไฟล์ → สแกนได้ว่าเหลืออะไร)
+//   <store>/conflicts/<id>-<heading สั้น>.wait.md  (สถานะอยู่ในชื่อไฟล์ → สแกนได้ว่าเหลืออะไร · เจ้าของ 2026-09-09: ชื่อเดิม id-topic-heading ยาวเกิน)
 //   แต่ละรายงานมี block A (cloud) และ block B (ร่าง) แยกกัน มี checkbox markdown ให้เลือก แก้ข้อความใน block ก่อนติ๊กได้
 // → เจ้าของติ๊กแล้วสั่ง resolve: ประกอบร่างจากผล 3-way ที่เก็บไว้ (marker ต่อบริเวณ) ด้วย block ที่เลือก เลื่อน base ตาม cloud
 //   เปลี่ยนชื่อรายงานเป็น .done.md ลบป้ายออกจากหัวข้อ
@@ -68,8 +68,24 @@ func (s *Store) ListConflicts() []ConflictReport {
 
 // chosenBlock ดูว่า block ไหนถูกติ๊ก (A/B) — ติ๊กทั้งคู่หรือไม่ติ๊ก = ""
 func chosenBlock(body string) string {
-	a, b := blockSection(body, "A"), blockSection(body, "B")
-	ca, cb := checkedRe.MatchString(a), checkedRe.MatchString(b)
+	// รูปแบบใหม่: สองช่องติ๊กอยู่ใต้ "## Decide" (keep A / keep B) · รูปแบบเก่า: ช่องติ๊กอยู่ในหัว "## Block A/B"
+	var ca, cb bool
+	if dec := blockSection(body, "Decide"); dec != "" {
+		for _, l := range strings.Split(dec, "\n") {
+			if !checkedRe.MatchString(l) {
+				continue
+			}
+			switch {
+			case strings.Contains(l, "**A**"):
+				ca = true
+			case strings.Contains(l, "**B**"):
+				cb = true
+			}
+		}
+	} else {
+		a, b := blockSection(body, "A"), blockSection(body, "B")
+		ca, cb = checkedRe.MatchString(a), checkedRe.MatchString(b)
+	}
 	switch {
 	case ca && cb:
 		return "both"
@@ -81,17 +97,29 @@ func chosenBlock(body string) string {
 	return ""
 }
 
-// blockSection ตัดส่วน "## Block X" ถึงหัวข้อถัดไป
+// blockSection ตัดส่วนของหัวข้อ: "### A — cloud"/"### B — draft" (ใหม่), "## Decide", หรือ "## Block A/B" (เก่า) ถึงหัวข้อระดับเดียวกันถัดไป
 func blockSection(body, which string) string {
-	start := strings.Index(body, "## Block "+which)
-	if start < 0 {
-		return ""
+	for _, h := range []string{"### " + which + " —", "## " + which, "## Block " + which} {
+		start := strings.Index(body, h)
+		if start < 0 {
+			continue
+		}
+		rest := body[start+len(h):]
+		level := "\n## "
+		if strings.HasPrefix(h, "### ") {
+			level = "\n### "
+		}
+		if end := strings.Index(rest, level); end >= 0 {
+			rest = rest[:end]
+		}
+		if level == "\n### " {
+			if end := strings.Index(rest, "\n## "); end >= 0 {
+				rest = rest[:end]
+			}
+		}
+		return rest
 	}
-	rest := body[start+len("## Block "+which):]
-	if end := strings.Index(rest, "\n## "); end >= 0 {
-		rest = rest[:end]
-	}
-	return rest
+	return ""
 }
 
 // blockText ดึงข้อความในรั้ว ```text … ``` ของ block (ที่เจ้าของอาจแก้แล้ว)
@@ -112,8 +140,8 @@ func slug(s string) string {
 	s = strings.ToLower(s)
 	s = regexp.MustCompile(`[^a-z0-9ก-๙]+`).ReplaceAllString(s, "-")
 	s = strings.Trim(s, "-")
-	if len([]rune(s)) > 40 {
-		s = string([]rune(s)[:40])
+	if len([]rune(s)) > 24 {
+		s = strings.Trim(string([]rune(s)[:24]), "-")
 	}
 	if s == "" {
 		s = "conflict"
@@ -147,6 +175,10 @@ func (s *Store) OpenConflict(name, topic, heading, reason string) ([]ConflictRep
 	}
 	next := 1
 	for _, c := range s.ListConflicts() {
+		if c.Status == "wait" && c.Draft == name {
+			_ = os.Remove(filepath.Join(s.Root, c.File)) // ยื่นซ้ำสำหรับร่างเดิม = แทนรายงานเก่าที่ยังไม่ได้ติ๊ก
+			continue
+		}
 		if c.ID >= next {
 			next = c.ID + 1
 		}
@@ -175,7 +207,24 @@ func (s *Store) OpenConflict(name, topic, heading, reason string) ([]ConflictRep
 		next++
 		ids = append(ids, "#"+strconv.Itoa(id))
 		out = append(out, fmt.Sprintf("<<<<<<< #%d >>>>>>>", id))
-		file := filepath.Join(s.conflictsDir(), fmt.Sprintf("%d-%s-%s.wait.md", id, slug(topic), slug(heading)))
+		file := filepath.Join(s.conflictsDir(), fmt.Sprintf("%d-%s.wait.md", id, slug(heading)))
+		// ส่วนต่างล้วน ๆ ระหว่างสอง block (เจ้าของ 2026-09-09: อ่านสอง block เต็มแล้วบอกไม่ได้ว่าอันไหนถูก) — บรรทัดที่เท่ากันไม่ต้องอ่าน
+		only, _ := LineDiff(strings.Join(a, "\n"), strings.Join(b, "\n"))
+		var onlyA, onlyB []string
+		for _, l := range strings.Split(only, "\n") {
+			switch {
+			case strings.HasPrefix(l, "- "):
+				onlyA = append(onlyA, strings.TrimPrefix(l, "- "))
+			case strings.HasPrefix(l, "+ "):
+				onlyB = append(onlyB, strings.TrimPrefix(l, "+ "))
+			}
+		}
+		if len(onlyA) == 0 {
+			onlyA = []string{"(nothing — A has no line that B lacks)"}
+		}
+		if len(onlyB) == 0 {
+			onlyB = []string{"(nothing — B has no line that A lacks)"}
+		}
 		body := fmt.Sprintf(`---
 id: %d
 draft: %s
@@ -189,18 +238,33 @@ cloudUpdatedAt: %s
 
 # Conflict #%d — %s › %s
 
-%s
+**Why the agent could not decide:** %s
 
-วิธีตัดสิน: แก้ข้อความในรั้วของ block ที่ต้องการได้ก่อน แล้วติ๊ก "- [x]" ที่ block นั้น **หนึ่งช่องเท่านั้น** จากนั้นสั่ง agent ว่า "resolve" (หรือ "blm resolve %s") — ติ๊กแล้ว blm.md ถูกอัปเดตทันทีและป้าย #%d หายไป
+## What differs (read only this)
 
-## Block A — cloud (AgentsRoom, updated %s)
-- [ ] เลือก block นี้
+Only in **A — cloud** (AgentsRoom, updated %s):
 `+"```text\n%s\n```"+`
 
-## Block B — draft (ร่างของ agent ใน session นี้)
-- [ ] เลือก block นี้
+Only in **B — draft** (this session's local edit):
 `+"```text\n%s\n```"+`
-`, id, name, draft.Target, topic, heading, now, cloud.UpdatedAt, id, topic, heading, strings.TrimSpace(reason), name, id, cloud.UpdatedAt, strings.Join(a, "\n"), strings.Join(b, "\n"))
+
+Everything else in the region is identical on both sides.
+
+## Decide
+
+Tick **one** box. You may edit the text inside the chosen block first. Then tell the agent "resolve" (or run "blm resolve %s") — the note is updated at once and the #%d tag disappears.
+
+- [ ] keep **A** (cloud)
+- [ ] keep **B** (draft)
+
+## Full blocks
+
+### A — cloud
+`+"```text\n%s\n```"+`
+
+### B — draft
+`+"```text\n%s\n```"+`
+`, id, name, draft.Target, topic, heading, now, cloud.UpdatedAt, id, topic, heading, strings.TrimSpace(reason), cloud.UpdatedAt, strings.Join(onlyA, "\n"), strings.Join(onlyB, "\n"), name, id, strings.Join(a, "\n"), strings.Join(b, "\n"))
 		if err := os.WriteFile(file, []byte(body), 0o644); err != nil {
 			return nil, err
 		}

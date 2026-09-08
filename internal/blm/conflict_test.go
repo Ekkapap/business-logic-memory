@@ -16,7 +16,7 @@ func TestConflictWorkflow(t *testing.T) {
 	// cloud แก้บรรทัดเดียวกัน → ชน
 	_ = os.WriteFile(p, []byte("---\nname: \"blm\"\nfolder: \"features\"\nupdatedAt: \"2026-09-02T00:00:00Z\"\n---\n\n# Authentication\n\n## LINE Login\n- rule one\n- rule two (cloud)\nmemory: x\n"), 0o644)
 	reports, err := s.OpenConflict("blm", "Authentication", "LINE Login", "cloud says cloud, draft says mine")
-	if err != nil || len(reports) != 1 || reports[0].Status != "wait" || !strings.HasSuffix(reports[0].File, "1-authentication-line-login.wait.md") {
+	if err != nil || len(reports) != 1 || reports[0].Status != "wait" || !strings.HasSuffix(reports[0].File, "1-line-login.wait.md") {
 		t.Fatalf("open: %v %+v", err, reports)
 	}
 	d, _ := s.Get("blm")
@@ -37,9 +37,16 @@ func TestConflictWorkflow(t *testing.T) {
 	// เจ้าของแก้ block B แล้วติ๊ก
 	file := filepath.Join(root, reports[0].File)
 	raw, _ := os.ReadFile(file)
-	edited := strings.Replace(string(raw), "- rule two (mine)", "- rule two (owner edited)", 1)
-	bIdx := strings.Index(edited, "## Block B")
-	edited = edited[:bIdx] + strings.Replace(edited[bIdx:], "- [ ] เลือก block นี้", "- [x] เลือก block นี้", 1)
+	if !strings.Contains(string(raw), "## What differs") || !strings.Contains(string(raw), "Only in **B — draft**") || len(filepath.Base(reports[0].File)) > 40 {
+		t.Fatalf("report must lead with the A/B difference and have a short name: %s\n%s", reports[0].File, raw)
+	}
+	// ยื่นซ้ำสำหรับร่างเดิม → แทนรายงานเก่า id เดิม ไม่งอกเป็น #2
+	if again, err := s.OpenConflict("blm", "Authentication", "LINE Login", "again"); err != nil || len(again) != 1 || again[0].ID != 1 || len(s.ListConflicts()) != 1 {
+		t.Fatalf("re-open must replace: %v %+v", err, again)
+	}
+	raw, _ = os.ReadFile(file)
+	edited := strings.ReplaceAll(string(raw), "- rule two (mine)", "- rule two (owner edited)")
+	edited = strings.Replace(edited, "- [ ] keep **B** (draft)", "- [x] keep **B** (draft)", 1)
 	_ = os.WriteFile(file, []byte(edited), 0o644)
 	if list := s.ListConflicts(); list[0].Chosen != "B" {
 		t.Fatalf("chosen %+v", list)
