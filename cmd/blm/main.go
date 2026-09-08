@@ -30,7 +30,7 @@ const usage = `blm <command> [args]
   edit <target> <find> <replace>  edit lines of a backend note locally (mirror → draft), push later with sync
   diff <name> · merge <name> mine|cloud|content [file]   see what changed on the cloud vs your draft, then resolve
   conflicts [<id>] [-i] [--all]   waiting conflicts, one per block with its report path · <id> prints the report · -i pick → read → decide (c/i) · --all includes done
-  resolve <name> [--keep current|incoming]  apply the ticked block · --keep decides from the terminal without opening the file
+  resolve <name> [--keep current|incoming] [--no-push]  apply the decision, then push the note so the backend equals local (--no-push to skip)
   get <name> · save <name> <file|-> [--target t] [--mode m] [--folder f] [--description d] · update … · patch <name> <find> <replace> · delete <name>
   path                            add the blm folder to the user's PATH (prints the command if it cannot)
   guard                           PreToolUse hook: reads JSON on stdin, denies Bash writes inside the store
@@ -209,6 +209,9 @@ func run(cmd string, args []string) error {
 		if k := flags["keep"]; k != "" {
 			a["keep"] = k
 		}
+		if flags["no-push"] != "" {
+			a["push"] = false
+		}
 		res, err = srv.Call("blm_resolve", a)
 		asJSON = true
 	case "edit":
@@ -280,7 +283,7 @@ func splitFlags(args []string) (map[string]string, []string) {
 			continue
 		}
 		switch k {
-		case "json", "push", "pull", "docker", "apply", "parallel", "rebuild", "html", "i", "interactive", "all":
+		case "json", "push", "pull", "docker", "apply", "parallel", "rebuild", "html", "i", "interactive", "all", "no-push":
 			flags[k] = "1"
 		default:
 			if i+1 < len(args) {
@@ -370,9 +373,6 @@ func interactiveConflicts(srv *mcp.Server) error {
 			continue
 		}
 		om := out.(map[string]any)
-		fmt.Printf("resolved: kept %s for %s · %v\n", keep, note, om["done"])
-		if om["ok"] == true {
-			fmt.Println("push with: blm sync --apply")
-		}
+		fmt.Printf("resolved: kept %s for %s · %v · %v\n", keep, note, om["done"], om["next"])
 	}
 }

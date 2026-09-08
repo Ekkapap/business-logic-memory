@@ -75,8 +75,8 @@ func tools(c blm.Config) []tool {
 		{"blm_conflict", "Agent cannot decide a blm_diff conflict and the owner is not available: file it. The report is written for the OWNER — write `reason` in the owner's language (Thai on this project) saying what each side claims. Writes one report per conflicting region to <store>/conflicts/<id>-<topic>-<heading>.wait.md (block A = cloud, block B = draft, each with a markdown checkbox; the owner may edit a block before ticking it), keeps the 3-way result for reassembly, and tags blm.md at the `# <topic>` and `## <heading>` lines the conflicting note belongs to with [Conflict: #1, #2] (topic/heading = the Main Business topic and subtopic in blm.md, not headings of the note). The draft stays unpushed until blm_resolve.",
 			obj(map[string]any{"name": noteProps["name"], "topic": str("main topic (e.g. Authentication)"), "heading": str("subtopic heading exactly as in blm.md (e.g. LINE Login (delegated MFA))"), "reason": str("why you could not decide — what each side claims")}, "name", "topic", "heading", "reason")},
 		{"blm_conflicts", "List conflict reports: status wait/done (from the file name), topic › subtopic, which block is ticked — returns `terminal` ready to print. With id: the report itself as terminal text (Current = local draft, Incoming = cloud).", obj(map[string]any{"id": num("report id to show (omit = list)"), "all": boolean("include done reports in the list (default: waiting only)")})},
-		{"blm_resolve", "After the owner ticked one block per report: reassemble the draft from the kept 3-way result using the chosen (possibly edited) blocks, move the reports to .done.md, remove the [Conflict] tag, advance the draft base to the cloud version. Refuses while any region is unticked or has both boxes ticked.",
-			obj(map[string]any{"name": noteProps["name"], "keep": enum("decide from the terminal without ticking the file: current = local draft (B) · incoming = cloud (A); applies to every open report of this note", "current", "incoming")}, "name")},
+		{"blm_resolve", "After the owner ticked one block per report (or with keep): reassemble the draft from the kept 3-way result using the chosen (possibly edited) blocks, rename the reports to [done], remove the [Conflict] marks, advance the base to the cloud version, then push the note so the backend equals the local copy. Refuses while any region is unticked or has both boxes ticked.",
+			obj(map[string]any{"name": noteProps["name"], "keep": enum("decide from the terminal without ticking the file: current = local draft (B) · incoming = cloud (A); applies to every open report of this note", "current", "incoming"), "push": boolean("after a complete resolve push this note to the backend at once so the cloud equals the local copy (default true)"), "author": str("agent display name for the push"), "role": str("role id for the push")}, "name")},
 		{"blm_status", "Everything at once: readiness, binary/project paths, backend/store/mirror, rules file (topics/rules, last read), temp notes + size, history/reports, configured neighbour tools and rtk-gain-style stats — returns `terminal` ready to print", obj(map[string]any{})},
 		{"blm_report", "With rows: compose and save a rules check report (the tool aligns columns by real monospace width, writes reports/<date>-businesslogic.md, records a check stat) and returns `terminal` to print verbatim · without rows: read the latest report (filter by name)",
 			obj(map[string]any{
@@ -240,7 +240,29 @@ func (s *Server) Call(name string, a map[string]any) (any, error) {
 				return nil, err
 			}
 		}
-		return s.store.ResolveConflicts(in.Name)
+		res, err := s.store.ResolveConflicts(in.Name)
+		if err != nil || res["ok"] != true || s.cfg.Backend != blm.BackendAgentsRoom {
+			return res, err
+		}
+		// resolve = คำตัดสินของเจ้าของ → ดันโน้ตนั้นขึ้น backend ทันที ให้ข้างบนเท่ากับเรา (เจ้าของ 2026-09-09) · ปิดด้วย push:false
+		if p, ok := a["push"].(bool); ok && !p {
+			res["next"] = "push skipped (push:false) — blm_sync {apply:true} later"
+			return res, nil
+		}
+		author, _ := a["author"].(string)
+		role, _ := a["role"].(string)
+		if author == "" {
+			author = "Owner (blm resolve)"
+		}
+		pushed, perr := s.sync("push", nil, []string{in.Name}, true, author, role, nil, false, false)
+		if perr != nil {
+			res["push"] = map[string]any{"error": perr.Error()}
+			res["next"] = "resolved locally but the push failed — blm_sync {apply:true} when the backend is back"
+			return res, nil
+		}
+		res["push"] = pushed
+		res["next"] = "resolved and pushed — backend now equals the local note"
+		return res, nil
 	case "blm_status":
 		st := s.store.Status(s.cfg)
 		return map[string]any{"status": st, "terminal": blm.RenderStatus(st)}, nil
