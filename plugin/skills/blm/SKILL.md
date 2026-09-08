@@ -33,7 +33,7 @@ description: How to record project knowledge during a session without blocking o
 ## ตอนเจ้าของสั่ง "update memory" (มีเฉพาะ backend ที่มีปลายทาง: agentsroom/custom)
 
 1. `blm_sync` → `plan[]` แต่ละรายการคือ argument ของ `memory_save` ที่พร้อมส่ง (custom: `command` ให้รันผ่าน Bash)
-2. อ่าน `warnings` แล้วทำตามแผนทีละรายการ (agentsroom: `memory_save` เติม `author`, `role`)
+2. อ่าน `warnings` แล้วทำตามแผน **ทุกรายการพร้อมกันในข้อความเดียว** (agentsroom: `memory_save` หนึ่ง tool call ต่อรายการ เติม `author`, `role` · custom: Bash เดียวต่อคำสั่งด้วย `&` + `wait`) — แผนรวมโน้ต target เดียวกันไว้แล้ว ทุกรายการจึงคนละโน้ต ยิงขนานได้ ห้ามรอทีละตัวเพราะ AgentsRoom ช้า (เจ้าของสั่ง 2026-09-09)
 3. `blm_sync { done: [...plan[].from ที่สำเร็จ] }` → ไฟล์ย้ายไป `.synced/`
 - `blm_sync {direction:"pull"}` ก่อนอ่านกฎเมื่อสงสัยว่า mirror เก่า (agentsroom: บอกให้เรียก `memory_list` บังคับ fetch)
 - backend none/obsidian: ไม่มี `blm_sync` เลย — ไฟล์ใน store คือของจริง

@@ -72,7 +72,7 @@ func tools(c blm.Config) []tool {
 			obj(map[string]any{"event": enum("", "lookup", "override", "fixed"), "query": str(""), "topic": str(""), "note": str(""), "count": map[string]any{"type": "number"}}, "event")},
 		{"blm_tools", "Manage neighbour tools (socraticode | obsidian | graphify): status · get · install · start · stop · restart · gen-graph · help — acts when it knows the command, otherwise returns the command for the user to run",
 			obj(map[string]any{"action": enum("", "status", "get", "install", "start", "stop", "restart", "gen-graph", "help"), "tool": enum("", "socraticode", "obsidian", "graphify"), "docker": map[string]any{"type": "boolean", "description": "socraticode: run Qdrant + Ollama in Docker instead of native (required on Windows)"}}, "action")},
-		{"blm_sync", "push: move temp notes into the backend — first call without done returns the plan (notes with the same target merged, folder filled from mirror, warnings for missing targets); apply it, then call again with done=[names that succeeded] to archive them to .synced/ · pull: refresh mirror/store from the backend before reading rules",
+		{"blm_sync", "push: move temp notes into the backend — first call without done returns the plan (notes with the same target merged, folder filled from mirror, warnings for missing targets); apply ALL items in parallel (each targets a different note), then call again with done=[names that succeeded] to archive them to .synced/ · pull: refresh mirror/store from the backend before reading rules",
 			obj(map[string]any{"direction": enum("push (default) | pull", "push", "pull"), "done": strArr("temp notes already pushed successfully"), "names": strArr("restrict the plan to these notes (omit = all)")})},
 	}
 	if !c.HasSync() {
@@ -243,12 +243,13 @@ func (s *Server) sync(direction string, done, names []string) (any, error) {
 			it.Command = r.Replace(s.cfg.PushCommand)
 		}
 		if len(plan) > 0 {
-			next = "run plan[].command one by one via Bash, then call blm_sync again with done = plan[].from of the items that succeeded"
+			next = "every plan item targets a different note — run all plan[].command in parallel (one Bash call joining them with & and wait), then call blm_sync again with done = plan[].from of the items that succeeded"
 		}
 	} else if len(plan) > 0 {
-		next = "call AgentsRoom memory_save with plan[].memory_save one by one (add author/role), then call blm_sync again with done = plan[].from of the items that succeeded"
+		next = "every plan item targets a different note — issue ALL memory_save calls in parallel (one message, one tool call per plan[].memory_save, add author/role; AgentsRoom is slow, sequential calls multiply the wait), then call blm_sync again with done = plan[].from of the items that succeeded"
 	}
-	return map[string]any{"plan": plan, "next": next}, nil
+	// รวมโน้ต target เดียวกันแล้ว → ทุกรายการคนละโน้ต ยิงพร้อมกันได้ (เจ้าของสั่ง 2026-09-09: memory_save ช้า ห้ามรอทีละตัว)
+	return map[string]any{"plan": plan, "parallel": true, "next": next}, nil
 }
 
 // ---- JSON-RPC over stdio -----------------------------------------------------
