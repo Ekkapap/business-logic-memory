@@ -70,7 +70,7 @@ func (s *Store) ListConflicts() []ConflictReport {
 func chosenBlock(body string) string {
 	// รูปแบบใหม่: สองช่องติ๊กอยู่ใต้ "## Decide" (keep A / keep B) · รูปแบบเก่า: ช่องติ๊กอยู่ในหัว "## Block A/B"
 	var ca, cb bool
-	if dec := blockSection(body, "Decide"); dec != "" {
+	if dec := blockSection(body, "ตัดสิน"); dec != "" {
 		for _, l := range strings.Split(dec, "\n") {
 			if !checkedRe.MatchString(l) {
 				continue
@@ -120,6 +120,19 @@ func blockSection(body, which string) string {
 		return rest
 	}
 	return ""
+}
+
+// quote แสดงบรรทัดเป็น blockquote — ใน AgentsRoom รั้ว code ไม่ตัดบรรทัด อ่านย่อหน้ายาวไม่ได้ (เจ้าของ 2026-09-09) blockquote ตัดบรรทัดตามหน้าจอ
+func quote(lines []string) string {
+	var out []string
+	for _, l := range lines {
+		if strings.TrimSpace(l) == "" {
+			out = append(out, ">")
+			continue
+		}
+		out = append(out, "> "+l)
+	}
+	return strings.Join(out, "\n")
 }
 
 // blockText ดึงข้อความในรั้ว ```text … ``` ของ block (ที่เจ้าของอาจแก้แล้ว)
@@ -220,10 +233,10 @@ func (s *Store) OpenConflict(name, topic, heading, reason string) ([]ConflictRep
 			}
 		}
 		if len(onlyA) == 0 {
-			onlyA = []string{"(nothing — A has no line that B lacks)"}
+			onlyA = []string{"(ไม่มี — ฝั่ง A ไม่มีบรรทัดที่ B ขาด)"}
 		}
 		if len(onlyB) == 0 {
-			onlyB = []string{"(nothing — B has no line that A lacks)"}
+			onlyB = []string{"(ไม่มี — ฝั่ง B ไม่มีบรรทัดที่ A ขาด)"}
 		}
 		body := fmt.Sprintf(`---
 id: %d
@@ -236,35 +249,37 @@ created: %s
 cloudUpdatedAt: %s
 ---
 
-# Conflict #%d — %s › %s
+# ความขัดแย้ง #%d — %s › %s
 
-**Why the agent could not decide:** %s
+**ทำไม agent ตัดสินเองไม่ได้:** %s
 
-## What differs (read only this)
+## ต่างกันตรงไหน (อ่านแค่ส่วนนี้ก็พอ)
 
-Only in **A — cloud** (AgentsRoom, updated %s):
-`+"```text\n%s\n```"+`
+**มีเฉพาะฝั่ง A — cloud** (AgentsRoom แก้ล่าสุด %s):
 
-Only in **B — draft** (this session's local edit):
-`+"```text\n%s\n```"+`
+%s
 
-Everything else in the region is identical on both sides.
+**มีเฉพาะฝั่ง B — ร่างในเครื่อง** (แก้ใน session นี้):
 
-## Decide
+%s
 
-Tick **one** box. You may edit the text inside the chosen block first. Then tell the agent "resolve" (or run "blm resolve %s") — the note is updated at once and the #%d tag disappears.
+ส่วนที่เหลือของบริเวณนี้เหมือนกันทั้งสองฝั่ง
 
-- [ ] keep **A** (cloud)
-- [ ] keep **B** (draft)
+## ตัดสิน
 
-## Full blocks
+ติ๊ก **หนึ่งช่อง** เท่านั้น ถ้าอยากแก้ข้อความก่อน แก้ในรั้วของ block เต็มด้านล่างแล้วค่อยติ๊ก จากนั้นบอก agent ว่า "resolve" (หรือรัน "blm resolve %s") — โน้ตถูกอัปเดตทันที ป้าย #%d หายไป
+
+- [ ] เอาฝั่ง **A** (cloud)
+- [ ] เอาฝั่ง **B** (ร่างในเครื่อง)
+
+## Block เต็ม (แก้ได้ก่อนติ๊ก)
 
 ### A — cloud
 `+"```text\n%s\n```"+`
 
-### B — draft
+### B — ร่างในเครื่อง
 `+"```text\n%s\n```"+`
-`, id, name, draft.Target, topic, heading, now, cloud.UpdatedAt, id, topic, heading, strings.TrimSpace(reason), cloud.UpdatedAt, strings.Join(onlyA, "\n"), strings.Join(onlyB, "\n"), name, id, strings.Join(a, "\n"), strings.Join(b, "\n"))
+`, id, name, draft.Target, topic, heading, now, cloud.UpdatedAt, id, topic, heading, strings.TrimSpace(reason), cloud.UpdatedAt, quote(onlyA), quote(onlyB), name, id, strings.Join(a, "\n"), strings.Join(b, "\n"))
 		if err := os.WriteFile(file, []byte(body), 0o644); err != nil {
 			return nil, err
 		}

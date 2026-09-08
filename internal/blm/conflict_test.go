@@ -37,7 +37,7 @@ func TestConflictWorkflow(t *testing.T) {
 	// เจ้าของแก้ block B แล้วติ๊ก
 	file := filepath.Join(root, reports[0].File)
 	raw, _ := os.ReadFile(file)
-	if !strings.Contains(string(raw), "## What differs") || !strings.Contains(string(raw), "Only in **B — draft**") || len(filepath.Base(reports[0].File)) > 40 {
+	if !strings.Contains(string(raw), "## ต่างกันตรงไหน") || !strings.Contains(string(raw), "> - rule two (mine)") || len(filepath.Base(reports[0].File)) > 40 {
 		t.Fatalf("report must lead with the A/B difference and have a short name: %s\n%s", reports[0].File, raw)
 	}
 	// ยื่นซ้ำสำหรับร่างเดิม → แทนรายงานเก่า id เดิม ไม่งอกเป็น #2
@@ -46,7 +46,7 @@ func TestConflictWorkflow(t *testing.T) {
 	}
 	raw, _ = os.ReadFile(file)
 	edited := strings.ReplaceAll(string(raw), "- rule two (mine)", "- rule two (owner edited)")
-	edited = strings.Replace(edited, "- [ ] keep **B** (draft)", "- [x] keep **B** (draft)", 1)
+	edited = strings.Replace(edited, "- [ ] เอาฝั่ง **B**", "- [x] เอาฝั่ง **B**", 1)
 	_ = os.WriteFile(file, []byte(edited), 0o644)
 	if list := s.ListConflicts(); list[0].Chosen != "B" {
 		t.Fatalf("chosen %+v", list)
