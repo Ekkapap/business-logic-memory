@@ -229,15 +229,21 @@ func (s *Store) OpenConflict(name, topic, heading, reason string) ([]ConflictRep
 	if err := os.MkdirAll(s.conflictsDir(), 0o755); err != nil {
 		return nil, err
 	}
-	next := 1
+	// เลข #n = ลำดับในรายการที่ค้างอยู่ตอนนี้ ไม่ใช่เลขรันตลอดชีพ (เจ้าของ 2026-09-09) → ใช้เลขว่างต่ำสุดจากรายงานที่ยัง wait · done ไม่จองเลข
+	used := map[int]bool{}
 	for _, c := range s.ListConflicts() {
-		if c.Status == "wait" && c.Draft == name {
+		if c.Status != "wait" {
+			continue
+		}
+		if c.Draft == name {
 			_ = os.Remove(filepath.Join(s.Root, c.File)) // ยื่นซ้ำสำหรับร่างเดิม = แทนรายงานเก่าที่ยังไม่ได้ติ๊ก
 			continue
 		}
-		if c.ID >= next {
-			next = c.ID + 1
-		}
+		used[c.ID] = true
+	}
+	next := 1
+	for used[next] {
+		next++
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	// แยกบริเวณจาก marker แล้วแทนด้วย marker ที่มีเลข id เพื่อประกอบกลับตอน resolve
@@ -266,7 +272,10 @@ func (s *Store) OpenConflict(name, topic, heading, reason string) ([]ConflictRep
 			b = append(b, lines[i])
 		}
 		id := next
-		next++
+		used[id] = true
+		for used[next] {
+			next++
+		}
 		ids = append(ids, "#"+strconv.Itoa(id))
 		out = append(out, fmt.Sprintf("<<<<<<< #%d >>>>>>>", id))
 		file := filepath.Join(s.conflictsDir(), fmt.Sprintf("[wait] %s-%s.md", slug(heading), time.Now().Format("20060102150405")))

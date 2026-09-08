@@ -69,6 +69,15 @@ func TestConflictWorkflow(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(s.conflictsDir(), "blm.merged.md")); err == nil {
 		t.Fatal("merged snapshot must be removed after resolve")
 	}
+	// ไม่มีรายงานค้าง → conflict ใหม่ได้เลข #1 อีกครั้ง (เลข = ลำดับที่ค้างอยู่ ไม่ใช่เลขรัน)
+	if _, _, err := s.Edit("blm", "- rule two (owner edited)", "- rule two (again)"); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(p, []byte("---\nname: \"blm\"\nfolder: \"features\"\nupdatedAt: \"2026-09-03T00:00:00Z\"\n---\n\n# Authentication\n\n## LINE Login\n- rule one\n- rule two (cloud again)\nmemory: x\n"), 0o644)
+	again, err := s.OpenConflict("blm", "Authentication", "LINE Login", "ซ้ำ")
+	if err != nil || len(again) != 1 || again[0].ID != 1 {
+		t.Fatalf("id must restart at 1 when nothing is waiting: %v %+v", err, again)
+	}
 }
 
 func TestConflictOnOtherNoteTagsRules(t *testing.T) {
