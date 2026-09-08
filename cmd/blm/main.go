@@ -269,17 +269,18 @@ func splitFlags(args []string) (map[string]string, []string) {
 	var rest []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
-		if !strings.HasPrefix(a, "--") {
+		// -i / -all แบบขีดเดียวก็รับ (เจ้าของพิมพ์ `blm conflicts -i` 2026-09-09) ยกเว้นเลขติดลบ
+		if !strings.HasPrefix(a, "-") || len(a) < 2 || (a[1] >= '0' && a[1] <= '9') {
 			rest = append(rest, a)
 			continue
 		}
-		k := strings.TrimPrefix(a, "--")
+		k := strings.TrimLeft(a, "-")
 		if eq := strings.Index(k, "="); eq >= 0 {
 			flags[k[:eq]] = k[eq+1:]
 			continue
 		}
 		switch k {
-		case "json", "push", "pull", "docker", "apply", "parallel", "rebuild", "html":
+		case "json", "push", "pull", "docker", "apply", "parallel", "rebuild", "html", "i", "interactive", "all":
 			flags[k] = "1"
 		default:
 			if i+1 < len(args) {
