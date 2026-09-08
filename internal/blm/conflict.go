@@ -154,7 +154,12 @@ func slug(s string) string {
 	s = regexp.MustCompile(`[^a-z0-9ก-๙]+`).ReplaceAllString(s, "-")
 	s = strings.Trim(s, "-")
 	if len([]rune(s)) > 24 {
-		s = strings.Trim(string([]rune(s)[:24]), "-")
+		// ตัดที่ขอบคำ ไม่ให้เหลือเศษอย่าง "graph-rea" (เจ้าของถาม 2026-09-09)
+		cut := string([]rune(s)[:24])
+		if i := strings.LastIndex(cut, "-"); i > 8 {
+			cut = cut[:i]
+		}
+		s = strings.Trim(cut, "-")
 	}
 	if s == "" {
 		s = "conflict"

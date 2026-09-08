@@ -37,6 +37,9 @@ func TestConflictWorkflow(t *testing.T) {
 	// เจ้าของแก้ block B แล้วติ๊ก
 	file := filepath.Join(root, reports[0].File)
 	raw, _ := os.ReadFile(file)
+	if slug("2026-09-09 — blm_graph reads SocratiCode's graph") != "2026-09-09-blm-graph" {
+		t.Fatalf("slug must cut at a word boundary: %q", slug("2026-09-09 — blm_graph reads SocratiCode's graph"))
+	}
 	if !strings.Contains(string(raw), "## ต่างกันตรงไหน") || !strings.Contains(string(raw), "> - rule two (mine)") || len(filepath.Base(reports[0].File)) > 40 {
 		t.Fatalf("report must lead with the A/B difference and have a short name: %s\n%s", reports[0].File, raw)
 	}
