@@ -67,4 +67,4 @@ Native mode writes `QDRANT_MODE/QDRANT_URL/OLLAMA_MODE/OLLAMA_URL=external/local
 
 - `cmd/blm` — entrypoint · `internal/blm` — store, rules, layout, stats, status, tools · `internal/mcp` — stdio JSON-RPC · `internal/cli` — init, guard, PATH
 - `plugin/` — Claude Code plugin (manifest pointing at `blm mcp`, skill, commands) · `.claude-plugin/marketplace.json` — this repo is the marketplace
-- `make test` · `make install` · `make release VERSION=v2.0.0` (5 targets + GitHub Release via `gh`)
+- `make test` · `make install` (version = latest git tag, e.g. `2.0.6` or `2.0.6-2-g33bc0b6` past the tag) · `make release` (auto-bumps the patch number from the last tag on origin; `RELEASE_VERSION=v2.1.0` to pick one) — 5 targets + GitHub Release via `gh`
