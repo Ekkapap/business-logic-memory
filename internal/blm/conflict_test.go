@@ -153,3 +153,35 @@ func TestGitBlockAcceptsHandEditedLayout(t *testing.T) {
 		t.Fatalf("old layout: %q / %q", blockText(blockSection(old, "B")), blockText(blockSection(old, "A")))
 	}
 }
+
+func TestKeepDecidesFromTerminal(t *testing.T) {
+	s, _, root := tmpStore(t, BackendAgentsRoom)
+	mirrorNote(t, root, "blm", "# Authentication\n\n## LINE Login\n- rule one\nmemory: line-login\n", "2026-09-01T00:00:00Z")
+	p := mirrorNote(t, root, "line-login", "# LINE Login note\n\n## Flow\n- step a\n- step b\n", "2026-09-01T00:00:00Z")
+	if _, _, err := s.Edit("line-login", "- step b", "- step b (mine)"); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(p, []byte("---\nname: \"line-login\"\nfolder: \"features\"\nupdatedAt: \"2026-09-02T00:00:00Z\"\n---\n\n# LINE Login note\n\n## Flow\n- step a\n- step b (cloud)\n"), 0o644)
+	if _, err := s.OpenConflict("line-login", "Authentication", "LINE Login", "ทดสอบ"); err != nil {
+		t.Fatal(err)
+	}
+	list := s.ListConflicts()
+	if out := RenderConflicts(list); !strings.Contains(out, "not ticked") || !strings.Contains(out, "Authentication › LINE Login") {
+		t.Fatalf("render list: %s", out)
+	}
+	if txt, err := s.RenderConflict(list[0]); err != nil || !strings.Contains(txt, "<<<<<<< Current") || !strings.Contains(txt, "- step b (cloud)") || strings.Contains(txt, "```") {
+		t.Fatalf("render one: %v %s", err, txt)
+	}
+	if err := s.Keep("line-login", "incoming"); err != nil {
+		t.Fatal(err)
+	}
+	if s.ListConflicts()[0].Chosen != "A" {
+		t.Fatalf("keep incoming must tick A: %+v", s.ListConflicts()[0])
+	}
+	if res, err := s.ResolveConflicts("line-login"); err != nil || res["ok"] != true {
+		t.Fatalf("resolve: %v %v", err, res)
+	}
+	if d, _ := s.Get("line-login"); !strings.Contains(d.Content, "- step b (cloud)") {
+		t.Fatalf("incoming kept: %q", d.Content)
+	}
+}

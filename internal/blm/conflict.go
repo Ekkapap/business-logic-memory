@@ -595,3 +595,108 @@ func (s *Store) ResolveConflicts(name string) (map[string]any, error) {
 	}
 	return res, nil
 }
+
+// RenderConflicts ตารางรายงานทั้งหมดสำหรับเทอร์มินัล (เจ้าของ 2026-09-09: viewer ของ AgentsRoom เปิดลิงก์ .md ซ้อนไม่ได้ → ดูจากเทอร์มินัลแทน)
+func RenderConflicts(list []ConflictReport) string {
+	var b strings.Builder
+	wait := 0
+	var tr [][]string
+	for _, c := range list {
+		state := Green("done")
+		if c.Status == "wait" {
+			wait++
+			state = Yellow("wait")
+			switch c.Chosen {
+			case "":
+				state += Dim(" · not ticked")
+			case "both":
+				state += Red(" · both ticked")
+			default:
+				state += " · " + c.Chosen + " ticked"
+			}
+		}
+		tr = append(tr, []string{"#" + strconv.Itoa(c.ID), state, c.Topic + " › " + c.Heading, c.Draft, filepath.Base(c.File)})
+	}
+	b.WriteString(Title(fmt.Sprintf("blm conflicts — %d waiting", wait)) + "\n\n")
+	if len(tr) == 0 {
+		b.WriteString("none\n")
+		return b.String()
+	}
+	b.WriteString(Table([]string{"Id", "State", "blm.md topic › subtopic", "Note", "Report"}, tr) + "\n")
+	b.WriteString(Dim("blm conflicts <id> shows a report · blm resolve <note> --keep current|incoming decides without opening the file") + "\n")
+	return b.String()
+}
+
+// RenderConflict รายงานหนึ่งฉบับเป็นข้อความเทอร์มินัล: ตัด frontmatter, *** และรั้ว code · marker แบบ git คงไว้
+func (s *Store) RenderConflict(c ConflictReport) (string, error) {
+	raw, err := os.ReadFile(filepath.Join(s.Root, c.File))
+	if err != nil {
+		return "", err
+	}
+	_, _, body := splitFront(string(raw))
+	var out []string
+	for _, l := range strings.Split(body, "\n") {
+		t := strings.TrimSpace(l)
+		switch {
+		case strings.HasPrefix(t, "```"):
+			continue
+		case strings.HasPrefix(t, "# "):
+			out = append(out, Title(strings.TrimPrefix(t, "# ")))
+		case strings.HasPrefix(t, "## "):
+			out = append(out, Section(strings.TrimPrefix(t, "## ")))
+		case strings.HasPrefix(t, "***") && strings.HasSuffix(t, "***"):
+			out = append(out, Cyan(strings.Trim(t, "*")))
+		case t == "---":
+			continue
+		default:
+			out = append(out, strings.ReplaceAll(strings.ReplaceAll(l, "\\>", ">"), "**", ""))
+		}
+	}
+	out = append(out, "", Dim(fmt.Sprintf("decide: blm resolve %s --keep current   (B, local draft)   |   blm resolve %s --keep incoming   (A, cloud)", c.Draft, c.Draft)))
+	return strings.Join(out, "\n"), nil
+}
+
+// Keep ติ๊กช่องให้ทุกรายงานที่ยัง wait ของร่างนี้จากเทอร์มินัล: keep = current|B (ร่างในเครื่อง) หรือ incoming|A (cloud)
+func (s *Store) Keep(name, keep string) error {
+	which := ""
+	switch strings.ToLower(keep) {
+	case "current", "b", "mine", "local":
+		which = "B"
+	case "incoming", "a", "cloud", "theirs":
+		which = "A"
+	default:
+		return fmt.Errorf("keep %q: use current (local draft) or incoming (cloud)", keep)
+	}
+	n := 0
+	for _, c := range s.ListConflicts() {
+		if c.Draft != name || c.Status != "wait" {
+			continue
+		}
+		p := filepath.Join(s.Root, c.File)
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		lines := strings.Split(string(raw), "\n")
+		for i, l := range lines {
+			if !strings.HasPrefix(strings.TrimSpace(l), "- [") {
+				continue
+			}
+			mark := "- [ ]"
+			if strings.Contains(l, "**"+which+"**") {
+				mark = "- [x]"
+			}
+			lines[i] = checkboxRe.ReplaceAllString(l, mark)
+		}
+		if err := os.WriteFile(p, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+			return err
+		}
+		n++
+	}
+	if n == 0 {
+		return fmt.Errorf("keep: no open conflicts for %q", name)
+	}
+	return nil
+}
+
+var checkboxRe = regexp.MustCompile(`- \[[ xX]\]`)
