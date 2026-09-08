@@ -40,7 +40,7 @@ func TestConflictWorkflow(t *testing.T) {
 	if slug("2026-09-09 — blm_graph reads SocratiCode's graph") != "2026-09-09-blm-graph" {
 		t.Fatalf("slug must cut at a word boundary: %q", slug("2026-09-09 — blm_graph reads SocratiCode's graph"))
 	}
-	if !strings.Contains(string(raw), "<<<<<<< Current") || !strings.Contains(string(raw), "\n=======\n") || !strings.Contains(string(raw), "\\>\\>\\>\\>\\>\\>\\> Incoming") || len(filepath.Base(reports[0].File)) > 48 {
+	if !strings.Contains(string(raw), "***<<<<<<< Current") || !strings.Contains(string(raw), "***>>>>>>> Incoming") || strings.Contains(string(raw), "\n=======\n") || len(filepath.Base(reports[0].File)) > 48 {
 		t.Fatalf("report must lead with the A/B difference and have a short name: %s\n%s", reports[0].File, raw)
 	}
 	// ยื่นซ้ำสำหรับร่างเดิม → แทนรายงานเก่า id เดิม ไม่งอกเป็น #2
@@ -118,5 +118,24 @@ func TestConflictTagRegexCoversAllForms(t *testing.T) {
 		if got := conflictTagRe.ReplaceAllString(in, ""); got != "## X" {
 			t.Fatalf("%q → %q", in, got)
 		}
+	}
+}
+
+func TestGitBlockAcceptsHandEditedLayout(t *testing.T) {
+	// เจ้าของแก้มือ: หัว marker ติดกับเนื้อหา ไม่มีบรรทัดว่าง และคั่นด้วย ---
+	body := "## เทียบสองฝั่ง\n---\n***<<<<<<< Current — ร่างในเครื่อง (B)***\nmine line 1\nmine line 2\n\n---\n***>>>>>>> Incoming — cloud (A)***\ncloud line\n\n---\n## ตัดสิน\n- [x] เอา Current (**B**)\n- [ ] เอา Incoming (**A**)\n"
+	if b := blockText(blockSection(body, "B")); b != "mine line 1\nmine line 2" {
+		t.Fatalf("B %q", b)
+	}
+	if a := blockText(blockSection(body, "A")); a != "cloud line" {
+		t.Fatalf("A %q", a)
+	}
+	if chosenBlock(body) != "B" {
+		t.Fatalf("chosen %q", chosenBlock(body))
+	}
+	// รูปก่อนหน้า (marker ต้นบรรทัด, ======= คั่น, >>>>>>> escape) ยังอ่านได้
+	old := "x\n<<<<<<< Current — B\n\nm\n\n=======\n\nc\n\n\\>\\>\\>\\>\\>\\>\\> Incoming — A\n\n## ตัดสิน\n"
+	if blockText(blockSection(old, "B")) != "m" || blockText(blockSection(old, "A")) != "c" {
+		t.Fatalf("old layout: %q / %q", blockText(blockSection(old, "B")), blockText(blockSection(old, "A")))
 	}
 }

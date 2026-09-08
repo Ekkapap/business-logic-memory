@@ -103,24 +103,11 @@ func chosenBlock(body string) string {
 
 // blockSection ตัดส่วนของหัวข้อ: "### A — cloud"/"### B — draft" (ใหม่), "## Decide", หรือ "## Block A/B" (เก่า) ถึงหัวข้อระดับเดียวกันถัดไป
 func blockSection(body, which string) string {
-	// รูปปัจจุบัน (แบบ git): B = ระหว่าง "<<<<<<< Current" กับ "=======" · A = ระหว่าง "=======" กับ ">>>>>>> Incoming"
-	if i := strings.Index(body, "\n<<<<<<< Current"); i >= 0 && which != "ตัดสิน" && which != "Decide" {
-		rest := body[i+1:]
-		nl := strings.Index(rest, "\n")
-		if nl < 0 {
-			return ""
-		}
-		rest = rest[nl+1:]
-		mid := strings.Index(rest, "\n=======\n")
-		endIdx := strings.Index(rest, "\n\\>\\>\\>\\>\\>\\>\\> Incoming") // escape ไว้ ไม่งั้น markdown ทำเป็น blockquote 7 ชั้น (เห็น 2026-09-09)
-		if mid < 0 || endIdx < 0 || endIdx < mid {
-			return ""
-		}
-		if which == "B" {
-			return "```text\n" + strings.TrimSpace(rest[:mid]) + "\n```"
-		}
-		if which == "A" {
-			return "```text\n" + strings.TrimSpace(rest[mid+len("\n=======\n"):endIdx]) + "\n```"
+	// รูปปัจจุบัน (เจ้าของออกแบบ 2026-09-09): บรรทัดหัว `***<<<<<<< Current …***` แล้วเนื้อหา B จนถึง `---` · `***>>>>>>> Incoming …***` แล้วเนื้อหา A จนถึง `---`
+	// รองรับรูปก่อนหน้า (marker ต้นบรรทัดไม่มี *** · `=======` คั่น · `\>\>…` escape) และไฟล์ที่เจ้าของแก้มือโดยไม่มีบรรทัดว่างหลังหัว
+	if which == "A" || which == "B" {
+		if txt, ok := gitBlock(body, which); ok {
+			return "```text\n" + txt + "\n```"
 		}
 	}
 	for _, h := range []string{"### " + which + " —", "## " + which, "## Block " + which} {
@@ -144,6 +131,46 @@ func blockSection(body, which string) string {
 		return rest
 	}
 	return ""
+}
+
+func isMarker(l, which string) bool {
+	l = strings.Trim(strings.TrimSpace(l), "*")
+	l = strings.ReplaceAll(l, "\\>", ">")
+	if which == "B" {
+		return strings.HasPrefix(l, "<<<<<<< Current")
+	}
+	return strings.HasPrefix(l, ">>>>>>> Incoming")
+}
+
+// gitBlock เนื้อหาของฝั่ง which (B = Current, A = Incoming) จากส่วนเทียบแบบ git · จบที่ `---`, marker ถัดไป, `=======` หรือหัวข้อ `## `
+func gitBlock(body, which string) (string, bool) {
+	lines := strings.Split(body, "\n")
+	for i, l := range lines {
+		if !isMarker(l, which) {
+			continue
+		}
+		if which == "A" {
+			// รูปก่อนหน้า: A อยู่ระหว่าง `=======` กับ marker Incoming (ก่อน marker) ไม่ใช่หลัง
+			for j := i - 1; j >= 0; j-- {
+				if isMarker(lines[j], "B") {
+					break
+				}
+				if strings.TrimSpace(lines[j]) == "=======" {
+					return strings.TrimSpace(strings.Join(lines[j+1:i], "\n")), true
+				}
+			}
+		}
+		var out []string
+		for _, m := range lines[i+1:] {
+			t := strings.TrimSpace(m)
+			if t == "---" || t == "=======" || strings.HasPrefix(t, "## ") || isMarker(m, "A") || isMarker(m, "B") {
+				break
+			}
+			out = append(out, m)
+		}
+		return strings.TrimSpace(strings.Join(out, "\n")), true
+	}
+	return "", false
 }
 
 // blockText ดึงข้อความในรั้ว ```text … ``` ของ block (ที่เจ้าของอาจแก้แล้ว)
@@ -268,15 +295,19 @@ cloudUpdatedAt: %s
 
 ## เทียบสองฝั่ง (แบบ git — แก้ข้อความในฝั่งที่จะเก็บได้เลย)
 
-<<<<<<< Current — ร่างในเครื่อง (B, แก้ใน session นี้)
+---
+
+***<<<<<<< Current — ร่างในเครื่อง (B, แก้ใน session นี้)***
 
 %s
 
-=======
+---
+
+***>>>>>>> Incoming — cloud (A, AgentsRoom แก้ล่าสุด %s)***
 
 %s
 
-\>\>\>\>\>\>\> Incoming — cloud (A, AgentsRoom แก้ล่าสุด %s)
+---
 
 ## ตัดสิน
 
@@ -284,7 +315,7 @@ cloudUpdatedAt: %s
 
 - [ ] เอา Current — ร่างในเครื่อง (**B**)
 - [ ] เอา Incoming — cloud (**A**)
-`, id, name, draft.Target, topic, heading, lastHead, now, cloud.UpdatedAt, id, topic, heading, s.rel(filepath.Join(s.Dir, name+".md")), folder, draft.Target, strings.TrimPrefix(strings.TrimPrefix(lastHead, "## "), "# "), topic, heading, strings.TrimSpace(reason), strings.Join(b, "\n"), strings.Join(a, "\n"), cloud.UpdatedAt, name, id)
+`, id, name, draft.Target, topic, heading, lastHead, now, cloud.UpdatedAt, id, topic, heading, s.rel(filepath.Join(s.Dir, name+".md")), folder, draft.Target, strings.TrimPrefix(strings.TrimPrefix(lastHead, "## "), "# "), topic, heading, strings.TrimSpace(reason), strings.Join(b, "\n"), cloud.UpdatedAt, strings.Join(a, "\n"), name, id)
 		if err := os.WriteFile(file, []byte(body), 0o644); err != nil {
 			return nil, err
 		}
