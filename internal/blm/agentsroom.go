@@ -193,7 +193,8 @@ func (s *Store) PushAll(c *Client, plan []SyncItem, author, role string, deletes
 		go func(i int, item SyncItem) {
 			defer wg.Done()
 			t := time.Now()
-			args := map[string]any{"name": item.MemorySave.Name, "mode": item.MemorySave.Mode, "content": item.MemorySave.Content, "author": author, "role": role}
+			// scope project เสมอ: กฎธุรกิจเป็นของโปรเจ็คนี้ ไม่ใช่ทั้งบัญชี (เจ้าของย้ำ 2026-09-09) · folder "global/…" = ทั้งโปรเจ็ค ไม่ใช่ทุกโปรเจ็ค
+			args := map[string]any{"name": item.MemorySave.Name, "mode": item.MemorySave.Mode, "content": item.MemorySave.Content, "author": author, "role": role, "scope": "project"}
 			if item.MemorySave.Folder != "" {
 				args["folder"] = item.MemorySave.Folder
 			}
