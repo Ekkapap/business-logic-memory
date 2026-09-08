@@ -271,10 +271,33 @@ func Init(o InitOptions) []string {
 	}
 	log = append(log, line+"  tools="+strings.Join(c.Tools, ","))
 	_ = os.MkdirAll(filepath.Join(o.Root, c.Store), 0o755)
+	// ignore: ของที่เป็น output/สำเนาของเครื่องมืออื่นต้องไม่ถูกวิเคราะห์หรือ index ซ้ำ (เจ้าของ 2026-09-09):
+	// store ของ blm เอง (ร่าง/history/reports), graphify-out/, vault ของ Obsidian, สถานะแอปใน .agentsroom (ยกเว้น mirror memory)
+	ignoreLines := []string{c.Store + "/", ".claude/", ".agentsroom/*", "!.agentsroom/memory/", "graphify-out/", ".obsidian/", "node_modules/", "dist/", "build/", "*.lock"}
 	ign := filepath.Join(o.Root, ".ignorememory")
 	if _, err := os.Stat(ign); err != nil {
-		_ = os.WriteFile(ign, []byte("# blm: paths to skip during /blm_init analysis, on top of .gitignore and .socraticodeignore (merged automatically)\n# one gitignore-style pattern per line\nnode_modules/\ndist/\nbuild/\n*.lock\n"), 0o644)
-		log = append(log, "ignore   .ignorememory created")
+		_ = os.WriteFile(ign, []byte("# blm: paths to skip during /blm_init analysis, on top of .gitignore and .socraticodeignore (merged automatically)\n# one gitignore-style pattern per line — tool outputs and blm's own store are never project knowledge\n"+strings.Join(ignoreLines, "\n")+"\n"), 0o644)
+		log = append(log, "ignore   .ignorememory created ("+strings.Join(ignoreLines, " ")+")")
+	}
+	// socraticode ใช้ในโปรเจ็คนี้ → กัน index ซ้ำ: เติมบรรทัดที่ยังไม่มีเข้า .socraticodeignore (ไม่แตะของเดิม)
+	if contains(c.Tools, "socraticode") {
+		sci := filepath.Join(o.Root, ".socraticodeignore")
+		cur := readFileOr(sci)
+		var add []string
+		for _, l := range []string{c.Store + "/", "graphify-out/", ".obsidian/"} {
+			if !strings.Contains(cur, "\n"+l) && !strings.HasPrefix(cur, l) && !strings.Contains(cur, "\n"+strings.TrimSuffix(l, "/")+"\n") {
+				add = append(add, l)
+			}
+		}
+		if len(add) > 0 {
+			if cur != "" && !strings.HasSuffix(cur, "\n") {
+				cur += "\n"
+			}
+			cur += "\n# blm: tool outputs — indexed elsewhere or regenerated, never index twice\n" + strings.Join(add, "\n") + "\n"
+			if err := os.WriteFile(sci, []byte(cur), 0o644); err == nil {
+				log = append(log, "ignore   .socraticodeignore += "+strings.Join(add, " "))
+			}
+		}
 	}
 
 	// 2. .claude/settings.json ของโปรเจ็ค (merge ไม่ทับ) — Edit/Write ห้าม · sandbox denyWrite · hook `blm guard`
@@ -344,6 +367,14 @@ func Init(o InitOptions) []string {
 }
 
 func exists(p string) bool { _, err := os.Stat(p); return err == nil }
+
+func readFileOr(p string) string {
+	raw, err := os.ReadFile(p)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
+}
 
 func contains(list []string, s string) bool {
 	for _, x := range list {
