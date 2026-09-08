@@ -166,7 +166,7 @@ func TestKeepDecidesFromTerminal(t *testing.T) {
 		t.Fatal(err)
 	}
 	list := s.ListConflicts()
-	if out := RenderConflicts(list); !strings.Contains(out, "not ticked") || !strings.Contains(out, "Authentication › LINE Login") {
+	if out := RenderConflicts(list, false); !strings.Contains(out, "not ticked") || !strings.Contains(out, "Authentication › LINE Login") {
 		t.Fatalf("render list: %s", out)
 	}
 	if txt, err := s.RenderConflict(list[0]); err != nil || !strings.Contains(txt, "<<<<<<< Current") || !strings.Contains(txt, "- step b (cloud)") || strings.Contains(txt, "```") {

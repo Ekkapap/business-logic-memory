@@ -596,34 +596,40 @@ func (s *Store) ResolveConflicts(name string) (map[string]any, error) {
 	return res, nil
 }
 
-// RenderConflicts ตารางรายงานทั้งหมดสำหรับเทอร์มินัล (เจ้าของ 2026-09-09: viewer ของ AgentsRoom เปิดลิงก์ .md ซ้อนไม่ได้ → ดูจากเทอร์มินัลแทน)
-func RenderConflicts(list []ConflictReport) string {
+// RenderConflicts รายการสำหรับเทอร์มินัล: เฉพาะที่ค้าง (all=true รวมที่จบแล้ว) บรรทัดละรายการ + path เต็มบรรทัดถัดไป
+// (เจ้าของ 2026-09-09: viewer ของ AgentsRoom เปิดลิงก์ .md ซ้อนไม่ได้ → ดู/ตัดสินจากเทอร์มินัล · ที่ resolve แล้วต้องหายจาก list)
+func RenderConflicts(list []ConflictReport, all bool) string {
 	var b strings.Builder
 	wait := 0
-	var tr [][]string
 	for _, c := range list {
-		state := Green("done")
 		if c.Status == "wait" {
 			wait++
-			state = Yellow("wait")
+		}
+	}
+	b.WriteString(Title(fmt.Sprintf("blm conflicts — %d waiting for the owner", wait)) + "\n")
+	shown := 0
+	for _, c := range list {
+		if c.Status != "wait" && !all {
+			continue
+		}
+		shown++
+		state := Green("done · kept " + c.Chosen)
+		if c.Status == "wait" {
 			switch c.Chosen {
 			case "":
-				state += Dim(" · not ticked")
+				state = Yellow("wait · not ticked")
 			case "both":
-				state += Red(" · both ticked")
+				state = Red("wait · both ticked")
 			default:
-				state += " · " + c.Chosen + " ticked"
+				state = Yellow("wait · " + c.Chosen + " ticked → blm resolve " + c.Draft)
 			}
 		}
-		tr = append(tr, []string{"#" + strconv.Itoa(c.ID), state, c.Topic + " › " + c.Heading, c.Draft, filepath.Base(c.File)})
+		fmt.Fprintf(&b, "\n%s  %s\n    %s  ←  note %s\n    %s\n", Cyan("#"+strconv.Itoa(c.ID)), state, c.Topic+" › "+c.Heading, c.Draft, Dim(c.File))
 	}
-	b.WriteString(Title(fmt.Sprintf("blm conflicts — %d waiting", wait)) + "\n\n")
-	if len(tr) == 0 {
-		b.WriteString("none\n")
-		return b.String()
+	if shown == 0 {
+		b.WriteString("\nnone\n")
 	}
-	b.WriteString(Table([]string{"Id", "State", "blm.md topic › subtopic", "Note", "Report"}, tr) + "\n")
-	b.WriteString(Dim("blm conflicts <id> shows a report · blm resolve <note> --keep current|incoming decides without opening the file") + "\n")
+	b.WriteString("\n" + Dim("blm conflicts <id>  show a report · blm conflicts -i  pick and decide interactively · blm resolve <note> --keep current|incoming · --all includes done") + "\n")
 	return b.String()
 }
 

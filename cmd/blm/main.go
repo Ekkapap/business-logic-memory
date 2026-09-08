@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -28,7 +29,7 @@ const usage = `blm <command> [args]
   sync --push|--pull [--apply] [--parallel] [--author a] [--role r] [--delete a,b]   plan, or with --apply push to AgentsRoom one by one (--parallel = all at once)
   edit <target> <find> <replace>  edit lines of a backend note locally (mirror → draft), push later with sync
   diff <name> · merge <name> mine|cloud|content [file]   see what changed on the cloud vs your draft, then resolve
-  conflicts [<id>]                list conflict reports · with id: print that report (Current = local draft, Incoming = cloud)
+  conflicts [<id>] [-i] [--all]   waiting conflicts, one per block with its report path · <id> prints the report · -i pick → read → decide (c/i) · --all includes done
   resolve <name> [--keep current|incoming]  apply the ticked block · --keep decides from the terminal without opening the file
   get <name> · save <name> <file|-> [--target t] [--mode m] [--folder f] [--description d] · update … · patch <name> <find> <replace> · delete <name>
   path                            add the blm folder to the user's PATH (prints the command if it cannot)
@@ -188,7 +189,10 @@ func run(cmd string, args []string) error {
 		res, err = srv.Call("blm_merge", a)
 		asJSON = true
 	case "conflicts", "conflict":
-		a := map[string]any{}
+		if flags["i"] != "" || flags["interactive"] != "" {
+			return interactiveConflicts(srv)
+		}
+		a := map[string]any{"all": flags["all"] != ""}
 		if len(rest) > 0 {
 			id, convErr := strconv.Atoi(strings.TrimPrefix(rest[0], "#"))
 			if convErr != nil {
@@ -307,4 +311,67 @@ func readContent(src string) (string, error) {
 		return "", err
 	}
 	return string(raw), nil
+}
+
+// interactiveConflicts เมนูเทอร์มินัลล้วน (เจ้าของ 2026-09-09: ไม่มี checkbox แบบ TUI ก็ใช้คำสั่งล้วนได้):
+// แสดงรายการที่ค้าง → พิมพ์เลข → เห็นรายงานแบบ git → c (current = ร่างในเครื่อง) / i (incoming = cloud) / s (ข้าม) → รายการนั้นหายจาก list
+func interactiveConflicts(srv *mcp.Server) error {
+	in := bufio.NewReader(os.Stdin)
+	for {
+		res, err := srv.Call("blm_conflicts", map[string]any{})
+		if err != nil {
+			return err
+		}
+		m := res.(map[string]any)
+		fmt.Println(m["terminal"])
+		open := 0
+		for _, c := range m["conflicts"].([]blm.ConflictReport) {
+			if c.Status == "wait" {
+				open++
+			}
+		}
+		if open == 0 {
+			return nil
+		}
+		fmt.Print("report id to review (Enter = quit): ")
+		line, _ := in.ReadString('\n')
+		line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "#"))
+		if line == "" {
+			return nil
+		}
+		id, convErr := strconv.Atoi(line)
+		if convErr != nil {
+			fmt.Println("not a number")
+			continue
+		}
+		show, err := srv.Call("blm_conflicts", map[string]any{"id": float64(id)})
+		if err != nil {
+			fmt.Println(err)
+			continue
+		}
+		sm := show.(map[string]any)
+		fmt.Println(sm["terminal"])
+		note := sm["conflict"].(blm.ConflictReport).Draft
+		fmt.Print("keep [c]urrent (local draft) · [i]ncoming (cloud) · [s]kip: ")
+		ans, _ := in.ReadString('\n')
+		keep := ""
+		switch strings.ToLower(strings.TrimSpace(ans)) {
+		case "c", "current":
+			keep = "current"
+		case "i", "incoming":
+			keep = "incoming"
+		default:
+			continue
+		}
+		out, err := srv.Call("blm_resolve", map[string]any{"name": note, "keep": keep})
+		if err != nil {
+			fmt.Println(err)
+			continue
+		}
+		om := out.(map[string]any)
+		fmt.Printf("resolved: kept %s for %s · %v\n", keep, note, om["done"])
+		if om["ok"] == true {
+			fmt.Println("push with: blm sync --apply")
+		}
+	}
 }
