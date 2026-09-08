@@ -20,8 +20,8 @@ func TestConflictWorkflow(t *testing.T) {
 		t.Fatalf("open: %v %+v", err, reports)
 	}
 	d, _ := s.Get("blm")
-	if !strings.Contains(d.Content, "## LINE Login [Conflict: #1]") {
-		t.Fatalf("heading must be tagged: %q", d.Content)
+	if !strings.Contains(d.Content, "# Authentication [Conflict: #1]") || !strings.Contains(d.Content, "## LINE Login [Conflict: #1]") {
+		t.Fatalf("main and sub topic must be tagged: %q", d.Content)
 	}
 	if r := s.Rules("", "agent"); len(r.Conflicts) != 1 {
 		t.Fatalf("rules must surface conflicts: %+v", r.Conflicts)
@@ -68,5 +68,39 @@ func TestConflictWorkflow(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(s.conflictsDir(), "blm.merged.md")); err == nil {
 		t.Fatal("merged snapshot must be removed after resolve")
+	}
+}
+
+func TestConflictOnOtherNoteTagsRules(t *testing.T) {
+	s, _, root := tmpStore(t, BackendAgentsRoom)
+	mirrorNote(t, root, "blm", "# Authentication\n\n## LINE Login\n- rule one\n\n# Portal\n\n## LINE Login\n- other\n", "2026-09-01T00:00:00Z")
+	p := mirrorNote(t, root, "line-login", "# LINE Login note\n\n## Flow\n- step a\n- step b\n", "2026-09-01T00:00:00Z")
+	if _, _, err := s.Edit("line-login", "- step b", "- step b (mine)"); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(p, []byte("---\nname: \"line-login\"\nfolder: \"features\"\nupdatedAt: \"2026-09-02T00:00:00Z\"\n---\n\n# LINE Login note\n\n## Flow\n- step a\n- step b (cloud)\n"), 0o644)
+	reports, err := s.OpenConflict("line-login", "Authentication", "LINE Login", "ทดสอบ")
+	if err != nil || len(reports) != 1 {
+		t.Fatalf("open: %v %+v", err, reports)
+	}
+	rules, _ := s.Get("blm")
+	if strings.Count(rules.Content, "[Conflict: #1]") != 2 || !strings.Contains(rules.Content, "# Authentication [Conflict: #1]") || strings.Contains(rules.Content, "# Portal [Conflict") {
+		t.Fatalf("blm.md must be tagged at Authentication › LINE Login only: %q", rules.Content)
+	}
+	if d, _ := s.Get("line-login"); strings.Contains(d.Content, "[Conflict") {
+		t.Fatalf("the conflicting note itself must not be tagged: %q", d.Content)
+	}
+	file := filepath.Join(root, reports[0].File)
+	raw, _ := os.ReadFile(file)
+	_ = os.WriteFile(file, []byte(strings.Replace(string(raw), "- [ ] เอาฝั่ง **A**", "- [x] เอาฝั่ง **A**", 1)), 0o644)
+	if res, err := s.ResolveConflicts("line-login"); err != nil || res["ok"] != true {
+		t.Fatalf("resolve: %v %v", err, res)
+	}
+	rules, _ = s.Get("blm")
+	if strings.Contains(rules.Content, "[Conflict") {
+		t.Fatalf("tags must be gone after resolve: %q", rules.Content)
+	}
+	if d, _ := s.Get("line-login"); !strings.Contains(d.Content, "- step b (cloud)") {
+		t.Fatalf("A chosen: %q", d.Content)
 	}
 }

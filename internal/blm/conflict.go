@@ -292,29 +292,65 @@ cloudUpdatedAt: %s
 	}
 	// ผล 3-way ที่มี marker เลข id (ใช้ประกอบกลับ) + base เลื่อนไปที่ cloud ปัจจุบันตอน resolve
 	_ = os.WriteFile(filepath.Join(s.conflictsDir(), name+".merged.md"), []byte("cloudUpdatedAt: "+cloud.UpdatedAt+"\n---\n"+strings.Join(out, "\n")), 0o644)
-	// ป้ายที่หัวข้อย่อยในร่าง (ตัดป้ายเก่าก่อน)
-	tagged := tagHeading(draft.Content, heading, ids)
-	if _, err := s.save(Input{Name: name, Target: draft.Target, Mode: "replace", Folder: draft.Folder, Description: draft.Description, Tags: draft.Tags, Content: tagged, HasContent: true, Base: draft.Base}, "conflict"); err != nil {
-		return nil, err
-	}
+	// ป้าย [Conflict: #n] ไปอยู่ที่ blm.md ตรง main/sub topic ที่โน้ตนี้เป็นส่วนประกอบ (เจ้าของ 2026-09-09) ไม่ใช่ในโน้ตที่ชน
+	s.refreshRuleTags()
 	return reports, nil
 }
 
+// refreshRuleTags เขียนป้ายใน blm.md ใหม่ทั้งไฟล์จากรายงานที่ยัง wait: ตัดป้ายเก่าทุกอัน แล้วติด `[Conflict: #a, #b]`
+// ที่บรรทัด `# <topic>` และ `## <heading>` ของทุกกลุ่ม → idempotent เรียกซ้ำได้ทั้งตอนยื่นและตอน resolve
+func (s *Store) refreshRuleTags() {
+	if s.RulesPath() == "" {
+		return
+	}
+	rules, err := s.Get(RulesNote)
+	if err != nil {
+		return
+	}
+	groups := map[[2]string][]string{}
+	var order [][2]string
+	for _, c := range s.ListConflicts() {
+		if c.Status != "wait" {
+			continue
+		}
+		k := [2]string{c.Topic, c.Heading}
+		if _, ok := groups[k]; !ok {
+			order = append(order, k)
+		}
+		groups[k] = append(groups[k], "#"+strconv.Itoa(c.ID))
+	}
+	content := conflictTagRe.ReplaceAllString(rules.Content, "")
+	for _, k := range order {
+		content = tagHeading(content, k[0], k[1], groups[k])
+	}
+	if content == rules.Content {
+		return
+	}
+	_, _ = s.save(Input{Name: RulesNote, Content: content, HasContent: true}, "conflict-tag")
+}
+
 // tagHeading เติม/แทนป้าย [Conflict: …] ที่บรรทัด `## <heading>` (ids ว่าง = ลบป้าย)
-func tagHeading(content, heading string, ids []string) string {
+// tagHeading ติดป้ายที่บรรทัด `# <topic>` (main) และ `## <heading>` (sub) ที่อยู่ใต้ topic นั้น · ป้ายเดิมบนบรรทัดนั้นถูกแทน
+func tagHeading(content, topic, heading string, ids []string) string {
 	lines := strings.Split(content, "\n")
+	tag := ""
+	if len(ids) > 0 {
+		tag = " [Conflict: " + strings.Join(ids, ", ") + "]"
+	}
+	inTopic := false
 	for i, l := range lines {
-		if !strings.HasPrefix(l, "## ") {
-			continue
-		}
 		clean := conflictTagRe.ReplaceAllString(l, "")
-		if strings.TrimSpace(strings.TrimPrefix(clean, "## ")) != strings.TrimSpace(heading) {
-			continue
+		switch {
+		case strings.HasPrefix(clean, "# "):
+			inTopic = strings.TrimSpace(strings.TrimPrefix(clean, "# ")) == strings.TrimSpace(topic)
+			if inTopic {
+				lines[i] = clean + tag
+			}
+		case strings.HasPrefix(clean, "## ") && inTopic:
+			if strings.TrimSpace(strings.TrimPrefix(clean, "## ")) == strings.TrimSpace(heading) {
+				lines[i] = clean + tag
+			}
 		}
-		if len(ids) > 0 {
-			clean += " [Conflict: " + strings.Join(ids, ", ") + "]"
-		}
-		lines[i] = clean
 	}
 	return strings.Join(lines, "\n")
 }
@@ -339,7 +375,6 @@ func (s *Store) ResolveConflicts(name string) (map[string]any, error) {
 	cloudAt := strings.TrimPrefix(parts[0], "cloudUpdatedAt: ")
 	snapshot := parts[len(parts)-1]
 	content := snapshot
-	heading := mine[0].Heading
 	var done, pending, both []string
 	for _, c := range mine {
 		marker := fmt.Sprintf("<<<<<<< #%d >>>>>>>", c.ID)
@@ -365,7 +400,7 @@ func (s *Store) ResolveConflicts(name string) (map[string]any, error) {
 	}
 	remaining := append(append([]string{}, pending...), both...)
 	sort.Strings(remaining)
-	content = tagHeading(content, heading, remaining)
+	content = conflictTagRe.ReplaceAllString(content, "") // ป้ายในโน้ตที่ชน (ถ้าเป็น blm.md เอง) เขียนใหม่โดย refreshRuleTags ท้ายสุด
 	draft, err := s.Get(name)
 	if err != nil {
 		return nil, err
@@ -386,6 +421,7 @@ func (s *Store) ResolveConflicts(name string) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	s.refreshRuleTags() // รายงานที่ done ถูก rename แล้ว → ป้ายเลขนั้นหายจาก blm.md ทันที ที่ยัง wait คงอยู่
 	res := map[string]any{"ok": len(remaining) == 0, "name": n.Name, "done": done, "pending": pending, "bothChecked": both, "base": n.Base, "bytes": len(n.Content)}
 	if len(remaining) == 0 {
 		res["next"] = "blm_sync {apply:true} to push"
