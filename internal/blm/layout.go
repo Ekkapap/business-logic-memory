@@ -195,10 +195,11 @@ func paint(code, s string) string {
 	return "\033[" + code + "m" + s + "\033[0m"
 }
 
-func Green(s string) string { return paint("1;32", s) }
-func Red(s string) string   { return paint("1;31", s) }
-func Cyan(s string) string  { return paint("1;36", s) }
-func Dim(s string) string   { return paint("2", s) }
+func Green(s string) string  { return paint("1;32", s) }
+func Red(s string) string    { return paint("1;31", s) }
+func Cyan(s string) string   { return paint("1;36", s) }
+func Dim(s string) string    { return paint("2", s) }
+func Yellow(s string) string { return paint("1;33", s) }
 
 const ruleWidth = 72
 
