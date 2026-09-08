@@ -288,12 +288,13 @@ func TestBuildFromSocraticode(t *testing.T) {
 	var fg scFileGraph
 	_ = json.Unmarshal([]byte(`{"nodes":[{"relativePath":"src/lib/db.ts","language":"typescript","imports":[]},{"relativePath":"src/lib/auth/session.ts","language":"typescript","imports":["@/lib/db"]},{"relativePath":"docs/a.md","language":"markdown","imports":[]}],"edges":[{"source":"src/lib/auth/session.ts","target":"src/lib/db.ts","type":"import"}]}`), &fg)
 	files := map[string]*scFilePayload{}
-	var p scFilePayload
-	_ = json.Unmarshal([]byte(`{"file":"src/lib/auth/session.ts","language":"typescript","symbols":[{"name":"createSession","kind":"function","line":10},{"name":"x","kind":"variable","line":1}],"outgoingCalls":[{"calleeName":"sql","calleeCandidates":["src/lib/db.ts::sql#3"]},{"calleeName":"log","calleeCandidates":[]},{"calleeName":"dup","calleeCandidates":["a.ts::dup#1","b.ts::dup#2"]}]}`), &p)
+	var pt scFilePoint
+	_ = json.Unmarshal([]byte(`{"filePayload":{"file":"src/lib/auth/session.ts","language":"typescript","symbols":[{"name":"<module>","kind":"module","line":1},{"name":"createSession","kind":"function","line":10},{"name":"x","kind":"variable","line":1}],"outgoingCalls":[{"calleeName":"sql","calleeCandidates":["src/lib/db.ts::sql#3"],"kind":"call"},{"calleeName":"md","calleeCandidates":["docs/a.md::x#1"],"kind":"call"},{"calleeName":"log","calleeCandidates":[],"kind":"call"},{"calleeName":"dup","calleeCandidates":["a.ts::dup#1","b.ts::dup#2"],"kind":"call"}]}}`), &pt)
+	p := pt.FilePayload
 	files["src/lib/auth/session.ts"] = &p
 	g := buildFromSocraticode("/r", fg, files)
-	if g.Engine != "socraticode" || g.Files != 3 || len(g.Edges) != 1 || g.Calls != 0 {
-		// import และ call ไปไฟล์เดียวกัน → รวมเป็น edge เดียว (kind import ชนะเพราะมาก่อน) calls ไม่นับซ้ำ
+	if g.Engine != "socraticode" || g.Files != 3 || len(g.Edges) != 2 || g.Calls != 1 {
+		// sql → db.ts ซ้ำกับ import edge (ไม่นับ) · md → docs/a.md เป็น call edge ใหม่ 1 เส้น
 		t.Fatalf("%+v", g)
 	}
 	if g.Hubs[0].Path != "src/lib/db.ts" || g.Hubs[0].In != 1 {

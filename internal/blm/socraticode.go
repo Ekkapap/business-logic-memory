@@ -103,7 +103,13 @@ type scFilePayload struct {
 	OutgoingCalls []struct {
 		CalleeName       string   `json:"calleeName"`
 		CalleeCandidates []string `json:"calleeCandidates"`
+		Kind             string   `json:"kind"` // "import" (แค่ import ชื่อมา) | "call" (เรียกจริง)
 	} `json:"outgoingCalls"`
+}
+
+// scFilePoint = payload จริงใน Qdrant ห่อ filePayload อีกชั้น (เห็นจากข้อมูลจริง 2026-09-09 ไม่ตรงกับ type ในซอร์ส)
+type scFilePoint struct {
+	FilePayload scFilePayload `json:"filePayload"`
 }
 
 // FetchSocraticodeGraph ดึงกราฟจาก Qdrant · คืน error เมื่อไม่มี Qdrant/ไม่มีกราฟของโปรเจ็คนี้ (caller ถอยไป ast-grep)
@@ -125,7 +131,7 @@ func FetchSocraticodeGraph(root string) (Graph, error) {
 			var page struct {
 				Result struct {
 					Points []struct {
-						Payload scFilePayload `json:"payload"`
+						Payload scFilePoint `json:"payload"`
 					} `json:"points"`
 					NextPageOffset any `json:"next_page_offset"`
 				} `json:"result"`
@@ -138,7 +144,10 @@ func FetchSocraticodeGraph(root string) (Graph, error) {
 				return // ไม่มี symbol graph ก็ยังได้กราฟไฟล์
 			}
 			for _, p := range page.Result.Points {
-				pl := p.Payload
+				pl := p.Payload.FilePayload
+				if pl.File == "" {
+					continue
+				}
 				files[filepath.ToSlash(pl.File)] = &pl
 			}
 			if page.Result.NextPageOffset == nil || len(page.Result.Points) == 0 {
@@ -211,7 +220,7 @@ func buildFromSocraticode(root string, fg scFileGraph, files map[string]*scFileP
 		n := add(rel, f.Language)
 		var syms []string
 		for _, s := range f.Symbols {
-			if s.Kind == "variable" || s.Kind == "property" {
+			if s.Kind == "variable" || s.Kind == "property" || s.Kind == "module" {
 				continue
 			}
 			syms = append(syms, s.Name)
@@ -225,9 +234,13 @@ func buildFromSocraticode(root string, fg scFileGraph, files map[string]*scFileP
 			if i := strings.Index(target, "::"); i >= 0 {
 				target = target[:i]
 			}
+			kind := c.Kind
+			if kind != "call" {
+				kind = "import"
+			}
 			before := len(edgeSet)
-			addEdge(rel, target, "call")
-			if len(edgeSet) > before {
+			addEdge(rel, target, kind)
+			if kind == "call" && len(edgeSet) > before {
 				calls++
 			}
 		}
