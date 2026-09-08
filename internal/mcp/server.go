@@ -66,6 +66,8 @@ func tools(c blm.Config) []tool {
 			obj(map[string]any{"name": noteProps["name"]}, "name")},
 		{"blm_merge", "Resolve a conflicting draft after blm_diff. keep=mine: re-apply the draft's changes on top of the current cloud version (3-way, refuses on overlapping regions) · keep=cloud: drop the draft (snapshot to history) · keep=content: store the text you merged by hand. Owner decides; the replaced version always lands in history/.",
 			obj(map[string]any{"name": noteProps["name"], "keep": enum("", "mine", "cloud", "content"), "content": str("merged body when keep=content")}, "name", "keep")},
+		{"blm_graph", "Built-in repo analysis when no SocratiCode/graphify is available: builds (once, cached in <store>/graph.json) a file graph from imports/requires/wiki-links plus exported symbols per file — hubs (most imported = core modules), clusters per folder with top symbols, and query = find files/symbols matching a word with who-imports-whom neighbours. Regex based, no external tools.",
+			obj(map[string]any{"query": str("word to look up (symbol or path); omit = summary"), "path": str("sub path to build from (omit = whole project)"), "rebuild": map[string]any{"type": "boolean", "description": "rebuild graph.json even if cached"}, "limit": map[string]any{"type": "number"}})},
 		{"blm_status", "Everything at once: readiness, binary/project paths, backend/store/mirror, rules file (topics/rules, last read), temp notes + size, history/reports, configured neighbour tools and rtk-gain-style stats — returns `terminal` ready to print", obj(map[string]any{})},
 		{"blm_report", "With rows: compose and save a rules check report (the tool aligns columns by real monospace width, writes reports/<date>-businesslogic.md, records a check stat) and returns `terminal` to print verbatim · without rows: read the latest report (filter by name)",
 			obj(map[string]any{
@@ -173,6 +175,21 @@ func (s *Server) Call(name string, a map[string]any) (any, error) {
 		return s.store.Diff(in.Name)
 	case "blm_merge":
 		return s.store.Merge(in.Name, getStr(a, "keep"), getStr(a, "content"))
+	case "blm_graph":
+		rebuild, _ := a["rebuild"].(bool)
+		g, ok := s.store.LoadGraph()
+		if !ok || rebuild || getStr(a, "path") != "" {
+			var err error
+			if g, err = s.store.BuildGraph(getStr(a, "path")); err != nil {
+				return nil, err
+			}
+		}
+		if q := getStr(a, "query"); q != "" {
+			lim, _ := a["limit"].(float64)
+			hits := blm.GraphQuery(g, q, int(lim))
+			return map[string]any{"query": q, "hits": hits, "builtAt": g.BuiltAt}, nil
+		}
+		return map[string]any{"summary": map[string]any{"builtAt": g.BuiltAt, "files": g.Files, "edges": len(g.Edges), "unlinked": g.Unlinked, "hubs": g.Hubs, "clusters": blm.ClustersHead(g.Clusters, 25)}, "terminal": blm.RenderGraph(g)}, nil
 	case "blm_status":
 		st := s.store.Status(s.cfg)
 		return map[string]any{"status": st, "terminal": blm.RenderStatus(st)}, nil

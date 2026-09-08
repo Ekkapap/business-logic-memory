@@ -219,3 +219,60 @@ func TestScanRepoSubProjects(t *testing.T) {
 		t.Fatal(out)
 	}
 }
+
+func TestGraphBuildAndQuery(t *testing.T) {
+	s, _, root := tmpStore(t, BackendNone)
+	w := func(p, body string) {
+		_ = os.MkdirAll(filepath.Dir(filepath.Join(root, p)), 0o755)
+		_ = os.WriteFile(filepath.Join(root, p), []byte(body), 0o644)
+	}
+	w("tsconfig.json", `{"compilerOptions": {"paths": {"@/*": ["./src/*"]}}} // trailing comment`)
+	w("src/lib/auth/session.ts", "export function createSession() {}\nexport const SESSION_TTL = 1\n")
+	w("src/lib/auth/login.ts", "import { createSession } from '@/lib/auth/session';\nimport x from './helpers'\nexport async function requestLogin() {}\n")
+	w("src/lib/auth/helpers.ts", "export const h = 1\n")
+	w("src/features/Login/index.tsx", "import { requestLogin } from '@/lib/auth/login'\nexport default function Login() {}\n")
+	w("vpn/go.mod", "module npmnet\n")
+	w("vpn/cmd/main.go", "package main\nimport (\n\t\"npmnet/internal/store\"\n)\nfunc main() {}\n")
+	w("vpn/internal/store/store.go", "package store\nfunc NewToken() string { return \"\" }\ntype Store struct{}\n")
+	w("docs/a.md", "# Auth\nsee [[b]] and [c](./c.md)\n")
+	w("docs/b.md", "# B\n")
+	w("docs/c.md", "# C\n")
+	w("node_modules/x/index.js", "module.exports = 1")
+	w(".gitignore", "node_modules/\n")
+	g, err := s.BuildGraph("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.Files != 9 {
+		t.Fatalf("files %d (node_modules must be skipped, tsconfig is config)", g.Files)
+	}
+	edges := map[string]bool{}
+	for _, e := range g.Edges {
+		edges[e.From+"->"+e.To] = true
+	}
+	for _, want := range []string{
+		"src/lib/auth/login.ts->src/lib/auth/session.ts",
+		"src/lib/auth/login.ts->src/lib/auth/helpers.ts",
+		"src/features/Login/index.tsx->src/lib/auth/login.ts",
+		"vpn/cmd/main.go->vpn/internal/store/store.go",
+		"docs/a.md->docs/b.md",
+		"docs/a.md->docs/c.md",
+	} {
+		if !edges[want] {
+			t.Fatalf("missing edge %s in %v", want, g.Edges)
+		}
+	}
+	if len(g.Hubs) == 0 || g.Hubs[0].In < 1 {
+		t.Fatalf("hubs %+v", g.Hubs)
+	}
+	hits := GraphQuery(g, "session", 5)
+	if len(hits) == 0 || hits[0].Path != "src/lib/auth/session.ts" || len(hits[0].ImportedBy) != 1 || hits[0].Symbols[0] != "createSession" {
+		t.Fatalf("query: %+v", hits)
+	}
+	if _, ok := s.LoadGraph(); !ok {
+		t.Fatal("graph.json must be cached")
+	}
+	if out := RenderGraph(g); !strings.Contains(out, "Hubs") || !strings.Contains(out, "src/lib") {
+		t.Fatal(out)
+	}
+}
