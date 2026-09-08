@@ -103,6 +103,26 @@ func chosenBlock(body string) string {
 
 // blockSection ตัดส่วนของหัวข้อ: "### A — cloud"/"### B — draft" (ใหม่), "## Decide", หรือ "## Block A/B" (เก่า) ถึงหัวข้อระดับเดียวกันถัดไป
 func blockSection(body, which string) string {
+	// รูปปัจจุบัน (แบบ git): B = ระหว่าง "<<<<<<< Current" กับ "=======" · A = ระหว่าง "=======" กับ ">>>>>>> Incoming"
+	if i := strings.Index(body, "\n<<<<<<< Current"); i >= 0 && which != "ตัดสิน" && which != "Decide" {
+		rest := body[i+1:]
+		nl := strings.Index(rest, "\n")
+		if nl < 0 {
+			return ""
+		}
+		rest = rest[nl+1:]
+		mid := strings.Index(rest, "\n=======\n")
+		endIdx := strings.Index(rest, "\n>>>>>>> Incoming")
+		if mid < 0 || endIdx < 0 || endIdx < mid {
+			return ""
+		}
+		if which == "B" {
+			return "```text\n" + strings.TrimSpace(rest[:mid]) + "\n```"
+		}
+		if which == "A" {
+			return "```text\n" + strings.TrimSpace(rest[mid+len("\n=======\n"):endIdx]) + "\n```"
+		}
+	}
 	for _, h := range []string{"### " + which + " —", "## " + which, "## Block " + which} {
 		start := strings.Index(body, h)
 		if start < 0 {
@@ -124,19 +144,6 @@ func blockSection(body, which string) string {
 		return rest
 	}
 	return ""
-}
-
-// quote แสดงบรรทัดเป็น blockquote — ใน AgentsRoom รั้ว code ไม่ตัดบรรทัด อ่านย่อหน้ายาวไม่ได้ (เจ้าของ 2026-09-09) blockquote ตัดบรรทัดตามหน้าจอ
-func quote(lines []string) string {
-	var out []string
-	for _, l := range lines {
-		if strings.TrimSpace(l) == "" {
-			out = append(out, ">")
-			continue
-		}
-		out = append(out, "> "+l)
-	}
-	return strings.Join(out, "\n")
 }
 
 // blockText ดึงข้อความในรั้ว ```text … ``` ของ block (ที่เจ้าของอาจแก้แล้ว)
@@ -240,23 +247,6 @@ func (s *Store) OpenConflict(name, topic, heading, reason string) ([]ConflictRep
 			headOrder = append(headOrder, lastHead)
 		}
 		noteHeads[lastHead] = append(noteHeads[lastHead], tagFor(id, file))
-		// ส่วนต่างล้วน ๆ ระหว่างสอง block (เจ้าของ 2026-09-09: อ่านสอง block เต็มแล้วบอกไม่ได้ว่าอันไหนถูก) — บรรทัดที่เท่ากันไม่ต้องอ่าน
-		only, _ := LineDiff(strings.Join(a, "\n"), strings.Join(b, "\n"))
-		var onlyA, onlyB []string
-		for _, l := range strings.Split(only, "\n") {
-			switch {
-			case strings.HasPrefix(l, "- "):
-				onlyA = append(onlyA, strings.TrimPrefix(l, "- "))
-			case strings.HasPrefix(l, "+ "):
-				onlyB = append(onlyB, strings.TrimPrefix(l, "+ "))
-			}
-		}
-		if len(onlyA) == 0 {
-			onlyA = []string{"(ไม่มี — ฝั่ง A ไม่มีบรรทัดที่ B ขาด)"}
-		}
-		if len(onlyB) == 0 {
-			onlyB = []string{"(ไม่มี — ฝั่ง B ไม่มีบรรทัดที่ A ขาด)"}
-		}
 		body := fmt.Sprintf(`---
 id: %d
 draft: %s
@@ -276,33 +266,25 @@ cloudUpdatedAt: %s
 
 **ทำไม agent ตัดสินเองไม่ได้:** %s
 
-## ต่างกันตรงไหน (อ่านแค่ส่วนนี้ก็พอ)
+## เทียบสองฝั่ง (แบบ git — แก้ข้อความในฝั่งที่จะเก็บได้เลย)
 
-**มีเฉพาะฝั่ง A — cloud** (AgentsRoom แก้ล่าสุด %s):
-
-%s
-
-**มีเฉพาะฝั่ง B — ร่างในเครื่อง** (แก้ใน session นี้):
+<<<<<<< Current — ร่างในเครื่อง (B, แก้ใน session นี้)
 
 %s
 
-ส่วนที่เหลือของบริเวณนี้เหมือนกันทั้งสองฝั่ง
+=======
+
+%s
+
+>>>>>>> Incoming — cloud (A, AgentsRoom แก้ล่าสุด %s)
 
 ## ตัดสิน
 
-ติ๊ก **หนึ่งช่อง** เท่านั้น ถ้าอยากแก้ข้อความก่อน แก้ในรั้วของ block เต็มด้านล่างแล้วค่อยติ๊ก จากนั้นบอก agent ว่า "resolve" (หรือรัน "blm resolve %s") — โน้ตถูกอัปเดตทันที ป้าย #%d หายไป
+ติ๊ก **หนึ่งช่อง** เท่านั้น แล้วบอก agent ว่า "resolve" (หรือรัน "blm resolve %s") — โน้ตถูกอัปเดตทันที ป้าย #%d หายไป
 
-- [ ] เอาฝั่ง **A** (cloud)
-- [ ] เอาฝั่ง **B** (ร่างในเครื่อง)
-
-## Block เต็ม (แก้ได้ก่อนติ๊ก)
-
-### A — cloud
-`+"```text\n%s\n```"+`
-
-### B — ร่างในเครื่อง
-`+"```text\n%s\n```"+`
-`, id, name, draft.Target, topic, heading, lastHead, now, cloud.UpdatedAt, id, topic, heading, s.rel(filepath.Join(s.Dir, name+".md")), folder, draft.Target, strings.TrimPrefix(strings.TrimPrefix(lastHead, "## "), "# "), topic, heading, strings.TrimSpace(reason), cloud.UpdatedAt, quote(onlyA), quote(onlyB), name, id, strings.Join(a, "\n"), strings.Join(b, "\n"))
+- [ ] เอา Current — ร่างในเครื่อง (**B**)
+- [ ] เอา Incoming — cloud (**A**)
+`, id, name, draft.Target, topic, heading, lastHead, now, cloud.UpdatedAt, id, topic, heading, s.rel(filepath.Join(s.Dir, name+".md")), folder, draft.Target, strings.TrimPrefix(strings.TrimPrefix(lastHead, "## "), "# "), topic, heading, strings.TrimSpace(reason), strings.Join(b, "\n"), strings.Join(a, "\n"), cloud.UpdatedAt, name, id)
 		if err := os.WriteFile(file, []byte(body), 0o644); err != nil {
 			return nil, err
 		}

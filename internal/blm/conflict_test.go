@@ -40,7 +40,7 @@ func TestConflictWorkflow(t *testing.T) {
 	if slug("2026-09-09 — blm_graph reads SocratiCode's graph") != "2026-09-09-blm-graph" {
 		t.Fatalf("slug must cut at a word boundary: %q", slug("2026-09-09 — blm_graph reads SocratiCode's graph"))
 	}
-	if !strings.Contains(string(raw), "## ต่างกันตรงไหน") || !strings.Contains(string(raw), "> - rule two (mine)") || len(filepath.Base(reports[0].File)) > 48 {
+	if !strings.Contains(string(raw), "<<<<<<< Current") || !strings.Contains(string(raw), "\n=======\n") || !strings.Contains(string(raw), ">>>>>>> Incoming") || len(filepath.Base(reports[0].File)) > 48 {
 		t.Fatalf("report must lead with the A/B difference and have a short name: %s\n%s", reports[0].File, raw)
 	}
 	// ยื่นซ้ำสำหรับร่างเดิม → แทนรายงานเก่า id เดิม ไม่งอกเป็น #2
@@ -49,7 +49,7 @@ func TestConflictWorkflow(t *testing.T) {
 	}
 	raw, _ = os.ReadFile(file)
 	edited := strings.ReplaceAll(string(raw), "- rule two (mine)", "- rule two (owner edited)")
-	edited = strings.Replace(edited, "- [ ] เอาฝั่ง **B**", "- [x] เอาฝั่ง **B**", 1)
+	edited = strings.Replace(edited, "- [ ] เอา Current — ร่างในเครื่อง (**B**)", "- [x] เอา Current — ร่างในเครื่อง (**B**)", 1)
 	_ = os.WriteFile(file, []byte(edited), 0o644)
 	if list := s.ListConflicts(); list[0].Chosen != "B" {
 		t.Fatalf("chosen %+v", list)
@@ -95,7 +95,7 @@ func TestConflictOnOtherNoteTagsRules(t *testing.T) {
 	}
 	file := filepath.Join(root, reports[0].File)
 	raw, _ := os.ReadFile(file)
-	_ = os.WriteFile(file, []byte(strings.Replace(string(raw), "- [ ] เอาฝั่ง **A**", "- [x] เอาฝั่ง **A**", 1)), 0o644)
+	_ = os.WriteFile(file, []byte(strings.Replace(string(raw), "- [ ] เอา Incoming — cloud (**A**)", "- [x] เอา Incoming — cloud (**A**)", 1)), 0o644)
 	if res, err := s.ResolveConflicts("line-login"); err != nil || res["ok"] != true {
 		t.Fatalf("resolve: %v %v", err, res)
 	}
