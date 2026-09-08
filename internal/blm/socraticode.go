@@ -216,6 +216,7 @@ func buildFromSocraticode(root string, fg scFileGraph, files map[string]*scFileP
 		addEdge(e.Source, e.Target, "import")
 	}
 	calls := 0
+	callPairs := map[string]bool{}
 	for rel, f := range files {
 		n := add(rel, f.Language)
 		var syms []string
@@ -241,10 +242,15 @@ func buildFromSocraticode(root string, fg scFileGraph, files map[string]*scFileP
 			addEdge(rel, target, kind)
 			// call ไปไฟล์ที่ import อยู่แล้ว → edge เดิมมีอยู่ก่อน (kind import) ยกระดับเป็น call และนับ (ไม่งั้น calls เป็น 0 ทั้งกราฟ เห็นบน NPM-PORTAL 2026-09-09: 2,869 call entries นับได้ 0)
 			k := filepath.ToSlash(rel) + "->" + filepath.ToSlash(target)
-			if e, ok := edgeSet[k]; ok && kind == "call" && e.Kind != "call" {
-				e.Kind = "call"
-				edgeSet[k] = e
-				calls++
+			if e, ok := edgeSet[k]; ok && kind == "call" {
+				if e.Kind != "call" {
+					e.Kind = "call"
+					edgeSet[k] = e
+				}
+				if !callPairs[k] {
+					callPairs[k] = true
+					calls++
+				}
 			}
 		}
 	}
