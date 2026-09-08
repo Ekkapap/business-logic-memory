@@ -185,3 +185,45 @@ func TestKeepDecidesFromTerminal(t *testing.T) {
 		t.Fatalf("incoming kept: %q", d.Content)
 	}
 }
+
+func TestProposeIsAConflictReportForTheOwner(t *testing.T) {
+	s, _, root := tmpStore(t, BackendAgentsRoom)
+	mirrorNote(t, root, "blm", "# Auth\n\n## Login\n- old rule\nmemory: x\n\n# Portal\n\n## Cards\n- c\n", "2026-09-01T00:00:00Z")
+	if s.RulesPath() == "" {
+		t.Fatal("checkout")
+	}
+	r1, err := s.Propose("Auth", "Login", "## Login\n- new rule\nmemory: x\nupdated_at: 2026-09-09", "โน้ตบอกว่ากฎเปลี่ยน")
+	if err != nil || r1.ID != 1 || r1.Kind != "proposal" {
+		t.Fatalf("propose: %v %+v", err, r1)
+	}
+	r2, err := s.Propose("Auth", "Sessions", "- sessions rule", "หัวข้อใหม่")
+	if err != nil || r2.ID != 2 {
+		t.Fatalf("propose new heading: %v %+v", err, r2)
+	}
+	rules, _ := s.Get("blm")
+	if !strings.Contains(rules.Content, "- old rule") || !strings.Contains(rules.Content, "## Login [Conflict](<conflicts/") || !strings.Contains(rules.Content, "# Auth [Conflict](<conflicts/") {
+		t.Fatalf("blm.md must be untouched but tagged: %q", rules.Content)
+	}
+	raw, _ := os.ReadFile(filepath.Join(root, r2.File))
+	if !strings.Contains(string(raw), "ยังไม่มีหัวข้อย่อยนี้") || !strings.Contains(string(raw), "## Sessions\n- sessions rule") {
+		t.Fatalf("new-heading report: %s", raw)
+	}
+	// รับข้อเสนอทั้งคู่จากเทอร์มินัล
+	if err := s.Keep("blm", "incoming"); err != nil {
+		t.Fatal(err)
+	}
+	res, err := s.ResolveConflicts("blm")
+	if err != nil || res["ok"] != true {
+		t.Fatalf("resolve: %v %v", err, res)
+	}
+	rules, _ = s.Get("blm")
+	if strings.Contains(rules.Content, "- old rule") || !strings.Contains(rules.Content, "- new rule") || !strings.Contains(rules.Content, "## Sessions\n- sessions rule") || strings.Contains(rules.Content, "[Conflict") || strings.Contains(rules.Content, "<<<<<<<") {
+		t.Fatalf("resolved: %q", rules.Content)
+	}
+	if !strings.Contains(rules.Content, "# Portal\n\n## Cards\n- c") {
+		t.Fatalf("other topics must survive: %q", rules.Content)
+	}
+	if len(s.PlanSync(s.List())) != 1 {
+		t.Fatal("accepted proposals make blm.md dirty → planned for push")
+	}
+}

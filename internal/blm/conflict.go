@@ -30,6 +30,8 @@ type ConflictReport struct {
 	Resolved string `json:"resolved,omitempty"`
 	// NoteHeading หัวข้อในโน้ตที่ชน (บรรทัด # / ## ก่อนบริเวณที่ชน) — ป้ายติดที่นี่ด้วย เพื่อบอกว่าแก้ตรงไหนของโน้ต
 	NoteHeading string `json:"noteHeading,omitempty"`
+	// Kind: "" = ชนกับ cloud · "proposal" = ข้อเสนอจาก agent ให้เจ้าของตัดสิน (Propose)
+	Kind string `json:"kind,omitempty"`
 }
 
 func (s *Store) conflictsDir() string { return filepath.Join(s.Dir, "conflicts") }
@@ -57,7 +59,7 @@ func (s *Store) ListConflicts() []ConflictReport {
 		}
 		meta, _, body := splitFront(string(raw))
 		id, _ := strconv.Atoi(meta["id"])
-		r := ConflictReport{ID: id, File: s.rel(filepath.Join(s.conflictsDir(), e.Name())), Status: m[1], Draft: meta["draft"], Topic: meta["topic"], Heading: meta["subtopic"], Created: meta["created"], Resolved: meta["resolved"], NoteHeading: meta["noteHeading"]}
+		r := ConflictReport{ID: id, File: s.rel(filepath.Join(s.conflictsDir(), e.Name())), Status: m[1], Draft: meta["draft"], Topic: meta["topic"], Heading: meta["subtopic"], Created: meta["created"], Resolved: meta["resolved"], NoteHeading: meta["noteHeading"], Kind: meta["kind"]}
 		r.Chosen = chosenBlock(body)
 		out = append(out, r)
 	}
@@ -163,7 +165,8 @@ func gitBlock(body, which string) (string, bool) {
 		var out []string
 		for _, m := range lines[i+1:] {
 			t := strings.TrimSpace(m)
-			if t == "---" || t == "=======" || strings.HasPrefix(t, "## ") || isMarker(m, "A") || isMarker(m, "B") {
+			// เนื้อ block เองมี "## หัวข้อย่อย" ได้ (ข้อเสนอ blm.md) → หยุดเฉพาะ ---, =======, marker อีกฝั่ง หรือส่วน "ตัดสิน"
+			if t == "---" || t == "=======" || strings.HasPrefix(t, "## ตัดสิน") || strings.HasPrefix(t, "## Decide") || isMarker(m, "A") || isMarker(m, "B") {
 				break
 			}
 			out = append(out, m)
@@ -385,7 +388,11 @@ func (s *Store) refreshRuleTags() {
 		}
 		link := "[Conflict](<conflicts/" + filepath.Base(c.File) + ">)"
 		if c.Draft == RulesNote {
-			content = tagLine(content, c.NoteHeading, []string{link})
+			if strings.Contains("\n"+content, "\n"+c.NoteHeading+"\n") || strings.Contains("\n"+content, "\n"+c.NoteHeading+" ") {
+				content = tagLine(content, c.NoteHeading, []string{link})
+			} else {
+				content = tagLine(content, "# "+c.Topic, []string{link}) // หัวข้อย่อยใหม่ที่ยังไม่มี → ป้ายที่ topic
+			}
 			continue
 		}
 		content = s.markMemory(content, c.Topic, c.Heading, c.Draft, link)
@@ -624,7 +631,11 @@ func RenderConflicts(list []ConflictReport, all bool) string {
 				state = Yellow("wait · " + c.Chosen + " ticked → blm resolve " + c.Draft)
 			}
 		}
-		fmt.Fprintf(&b, "\n%s  %s\n    %s  ←  note %s\n    %s\n", Cyan("#"+strconv.Itoa(c.ID)), state, c.Topic+" › "+c.Heading, c.Draft, Dim(c.File))
+		kind := "note " + c.Draft
+		if c.Kind == "proposal" {
+			kind = "proposal for blm.md"
+		}
+		fmt.Fprintf(&b, "\n%s  %s\n    %s  ←  %s\n    %s\n", Cyan("#"+strconv.Itoa(c.ID)), state, c.Topic+" › "+c.Heading, kind, Dim(c.File))
 	}
 	if shown == 0 {
 		b.WriteString("\nnone\n")
