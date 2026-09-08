@@ -1,0 +1,8 @@
+{
+  "name": "blm",
+  "owner": { "name": "Ekkapap Sricharoen" },
+  "metadata": { "description": "business-logic-memory — session temp memory + business-logic source of truth for Claude Code agents" },
+  "plugins": [
+    { "name": "blm", "source": "./plugin", "description": "blm_* MCP tools, /blm report protocol, /blm_init guided analysis" }
+  ]
+}

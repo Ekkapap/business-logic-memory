@@ -1,0 +1,328 @@
+// Package mcp — MCP server "blm" ผ่าน stdio JSON-RPC แบบบรรทัดต่อบรรทัด ไม่พึ่ง SDK
+// (สเปกส่วนที่ใช้มีสามอย่าง: initialize · tools/list · tools/call) · รันด้วย `blm mcp` cwd = โปรเจ็คที่เปิดอยู่ (หรือ BLM_ROOT)
+package mcp
+
+import (
+	"bufio"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/Ekkapap/business-logic-memory/internal/blm"
+)
+
+type tool struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	InputSchema map[string]any `json:"inputSchema"`
+}
+
+func obj(props map[string]any, required ...string) map[string]any {
+	m := map[string]any{"type": "object", "properties": props}
+	if len(required) > 0 {
+		m["required"] = required
+	}
+	return m
+}
+func str(desc string) map[string]any { return map[string]any{"type": "string", "description": desc} }
+func enum(desc string, vals ...string) map[string]any {
+	return map[string]any{"type": "string", "enum": vals, "description": desc}
+}
+func strArr(desc string) map[string]any {
+	return map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": desc}
+}
+
+var noteProps = map[string]any{
+	"name":        str("temp note name (kebab-case)"),
+	"content":     str("markdown body"),
+	"target":      str("destination note name (default = name) · business rules = blm"),
+	"mode":        enum("how to apply on sync (default append)", "append", "replace"),
+	"folder":      str("features | features/<x> | global/architecture|conventions|pitfalls (omit = guessed from mirror)"),
+	"description": str("retrieval cue of the destination note (required when creating / replace)"),
+	"tags":        strArr(""),
+}
+
+func tools(c blm.Config) []tool {
+	rowSchema := map[string]any{"type": "array", "items": obj(map[string]any{
+		"topic": str(""), "heading": str(""), "result": enum("", "PASSED", "NOT PASSED", "UNKNOWN"), "ref": str("block.refShort e.g. blm.md:29"),
+	}, "topic", "heading", "result", "ref")}
+	all := []tool{
+		{"blm", "Read the project's current business rules (blm.md — the single source of truth, changed only by the owner). No query = whole file · a word/heading = grep, returns the whole block of every matching subtopic with its main topic. Also reports which blocks changed since the last read and whether temp drafts are waiting for confirmation. Call it yourself whenever memory conflicts with code.",
+			obj(map[string]any{"query": str("word or heading to search (omit = whole file)"), "trigger": enum("who asked: user (via /blm) or agent on its own (default) — recorded in stats", "user", "agent")})},
+		{"blm_get", "Read one temp note in full", obj(map[string]any{"name": noteProps["name"]}, "name")},
+		{"blm_save", "Create/overwrite a whole temp note (like memory_save mode replace). Use it to jot what should reach the memory backend at the end of the session instead of calling memory_save mid-task", obj(noteProps, "name", "content")},
+		{"blm_update", "Append to an existing temp note (like memory_save mode append); metadata can be changed at the same time", obj(noteProps, "name", "content")},
+		{"blm_patch", "Replace an exact string in a temp note (must match exactly once)", obj(map[string]any{"name": noteProps["name"], "find": str(""), "replace": str("")}, "name", "find", "replace")},
+		{"blm_delete", "Delete a temp note (the previous version is snapshotted to history/)", obj(map[string]any{"name": noteProps["name"]}, "name")},
+		{"blm_status", "Everything at once: readiness, binary/project paths, backend/store/mirror, rules file (topics/rules, last read), temp notes + size, history/reports, configured neighbour tools and rtk-gain-style stats — returns `terminal` ready to print", obj(map[string]any{})},
+		{"blm_report", "With rows: compose and save a rules check report (the tool aligns columns by real monospace width, writes reports/<date>-businesslogic.md, records a check stat) and returns `terminal` to print verbatim · without rows: read the latest report (filter by name)",
+			obj(map[string]any{
+				"name":    str("report name, kebab-case (read: omit = latest of any name)"),
+				"scope":   str("topic checked (empty = All)"),
+				"before":  str("Current Understanding Before Test (markdown)"),
+				"after":   str("Current Understanding After Test (markdown)"),
+				"rows":    rowSchema,
+				"trigger": enum("", "user", "agent"),
+				"content": str("save a free-form report (whole markdown) instead of composing from rows"),
+			})},
+		{"blm_stat", "Record one stat event (summary in blm_status): lookup = owner could not remember, agent searched the rules {query} · override = owner changed a rule after confirming {topic, note?} · fixed = how many NOT PASSED of the last check the agent corrected on its own from the rules file {count}",
+			obj(map[string]any{"event": enum("", "lookup", "override", "fixed"), "query": str(""), "topic": str(""), "note": str(""), "count": map[string]any{"type": "number"}}, "event")},
+		{"blm_tools", "Manage neighbour tools (socraticode | obsidian | graphify): status · get · install · start · stop · restart · gen-graph · help — acts when it knows the command, otherwise returns the command for the user to run",
+			obj(map[string]any{"action": enum("", "status", "get", "install", "start", "stop", "restart", "gen-graph", "help"), "tool": enum("", "socraticode", "obsidian", "graphify"), "docker": map[string]any{"type": "boolean", "description": "socraticode: run Qdrant + Ollama in Docker instead of native (required on Windows)"}}, "action")},
+		{"blm_sync", "push: move temp notes into the backend — first call without done returns the plan (notes with the same target merged, folder filled from mirror, warnings for missing targets); apply it, then call again with done=[names that succeeded] to archive them to .synced/ · pull: refresh mirror/store from the backend before reading rules",
+			obj(map[string]any{"direction": enum("push (default) | pull", "push", "pull"), "done": strArr("temp notes already pushed successfully"), "names": strArr("restrict the plan to these notes (omit = all)")})},
+	}
+	if !c.HasSync() {
+		// backend ที่ไม่มีปลายทาง (none/obsidian) ไม่ประกาศ blm_sync เลย — เรียกไม่ได้ ไม่ใช่เรียกแล้วบอกว่า skip
+		all = all[:len(all)-1]
+	}
+	return all
+}
+
+type Server struct {
+	root  string
+	cfg   blm.Config
+	store *blm.Store
+	tools []tool
+}
+
+func New(root string) *Server {
+	cfg := blm.Load(root)
+	return &Server{root: root, cfg: cfg, store: blm.Open(root, cfg), tools: tools(cfg)}
+}
+
+func getStr(a map[string]any, k string) string {
+	s, _ := a[k].(string)
+	return s
+}
+func getArr(a map[string]any, k string) []string {
+	raw, _ := a[k].([]any)
+	var out []string
+	for _, v := range raw {
+		if s, ok := v.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// Call เรียก tool หนึ่งตัว — ใช้ทั้งจาก JSON-RPC และ CLI (โค้ดชุดเดียว)
+func (s *Server) Call(name string, a map[string]any) (any, error) {
+	in := blm.Input{Name: getStr(a, "name"), Target: getStr(a, "target"), Mode: getStr(a, "mode"), Folder: getStr(a, "folder"), Description: getStr(a, "description")}
+	if v, ok := a["content"].(string); ok {
+		in.Content, in.HasContent = v, true
+	}
+	if _, ok := a["tags"]; ok {
+		in.Tags = getArr(a, "tags")
+	}
+	switch name {
+	case "blm":
+		trigger := "agent"
+		if getStr(a, "trigger") == "user" {
+			trigger = "user"
+		}
+		return s.store.Rules(getStr(a, "query"), trigger), nil
+	case "blm_get":
+		return s.store.Get(in.Name)
+	case "blm_save":
+		n, err := s.store.Save(in)
+		return map[string]any{"ok": err == nil, "note": n}, err
+	case "blm_update":
+		n, err := s.store.Update(in)
+		return map[string]any{"ok": err == nil, "note": n}, err
+	case "blm_patch":
+		n, err := s.store.Patch(in.Name, getStr(a, "find"), getStr(a, "replace"))
+		return map[string]any{"ok": err == nil, "note": n}, err
+	case "blm_delete":
+		return map[string]any{"ok": true}, s.store.Delete(in.Name)
+	case "blm_status":
+		st := s.store.Status(s.cfg)
+		return map[string]any{"status": st, "terminal": blm.RenderStatus(st)}, nil
+	case "blm_report":
+		if rows, ok := a["rows"].([]any); ok && len(rows) > 0 {
+			var cr []blm.CheckRow
+			for _, r := range rows {
+				m, _ := r.(map[string]any)
+				row := blm.CheckRow{Topic: getStr(m, "topic"), Heading: getStr(m, "heading"), Result: getStr(m, "result"), Ref: getStr(m, "ref")}
+				if !blm.ValidResult(row.Result) {
+					return nil, fmt.Errorf("result must be PASSED | NOT PASSED | UNKNOWN (got %q)", row.Result)
+				}
+				cr = append(cr, row)
+			}
+			trigger := "agent"
+			if getStr(a, "trigger") == "user" {
+				trigger = "user"
+			}
+			return s.store.CheckReport(filepath.Base(s.root), getStr(a, "scope"), getStr(a, "before"), getStr(a, "after"), cr, trigger)
+		}
+		if c, ok := a["content"].(string); ok {
+			file, err := s.store.SaveReport(in.Name, c)
+			return map[string]any{"ok": err == nil, "file": file}, err
+		}
+		if r := s.store.LatestReport(in.Name); r != nil {
+			return r, nil
+		}
+		return map[string]any{"ok": false, "message": "no reports yet in " + s.cfg.Store + "/reports/"}, nil
+	case "blm_stat":
+		ev := map[string]any{"event": getStr(a, "event")}
+		switch ev["event"] {
+		case "lookup":
+			ev["query"] = getStr(a, "query")
+		case "override":
+			ev["topic"], ev["note"] = getStr(a, "topic"), getStr(a, "note")
+		case "fixed":
+			ev["count"], _ = a["count"].(float64)
+			ev["query"] = getStr(a, "query")
+		default:
+			return nil, fmt.Errorf("event must be lookup | override | fixed")
+		}
+		return map[string]any{"ok": true, "recorded": s.store.RecordStat(ev)}, nil
+	case "blm_tools":
+		docker, _ := a["docker"].(bool)
+		var log strings.Builder
+		out, err := blm.Tools(s.root, s.cfg, getStr(a, "action"), getStr(a, "tool"), docker, &log)
+		if log.Len() > 0 {
+			out = strings.TrimRight(log.String(), "\n") + "\n" + out
+		}
+		return map[string]any{"terminal": out}, err
+	case "blm_sync":
+		if !s.cfg.HasSync() {
+			return nil, fmt.Errorf("backend %s has no sync target", s.cfg.Backend)
+		}
+		return s.sync(getStr(a, "direction"), getArr(a, "done"), getArr(a, "names"))
+	}
+	return nil, fmt.Errorf("unknown tool %s", name)
+}
+
+func (s *Server) sync(direction string, done, names []string) (any, error) {
+	if direction == "pull" {
+		if s.cfg.Backend == blm.BackendCustom {
+			return map[string]any{"command": s.cfg.PullCommand, "next": "run command via Bash, then read the rules again with blm"}, nil
+		}
+		return map[string]any{"next": "call AgentsRoom `memory_list` to force a fresh fetch (mirror " + s.cfg.Mirror + " is overwritten with the real notes), then call blm again"}, nil
+	}
+	if len(done) > 0 {
+		var archived []string
+		for _, n := range done {
+			p, err := s.store.Archive(n)
+			if err != nil {
+				return nil, err
+			}
+			archived = append(archived, p)
+		}
+		var remaining []string
+		for _, n := range s.store.List() {
+			remaining = append(remaining, n.Name)
+		}
+		return map[string]any{"ok": true, "archived": archived, "remaining": remaining}, nil
+	}
+	notes := s.store.List()
+	if len(names) > 0 {
+		set := map[string]bool{}
+		for _, n := range names {
+			set[n] = true
+		}
+		var only []blm.Note
+		for _, n := range notes {
+			if set[n.Name] {
+				only = append(only, n)
+			}
+		}
+		notes = only
+	}
+	plan := s.store.PlanSync(notes)
+	next := "no temp notes to sync"
+	if s.cfg.Backend == blm.BackendCustom {
+		for i := range plan {
+			it := &plan[i]
+			desc, _ := json.Marshal(it.MemorySave.Description)
+			r := strings.NewReplacer("{name}", it.MemorySave.Name, "{folder}", it.MemorySave.Folder, "{description}", string(desc), "{file}", filepath.Join(s.store.Dir, it.From[0]+".md"))
+			it.Command = r.Replace(s.cfg.PushCommand)
+		}
+		if len(plan) > 0 {
+			next = "run plan[].command one by one via Bash, then call blm_sync again with done = plan[].from of the items that succeeded"
+		}
+	} else if len(plan) > 0 {
+		next = "call AgentsRoom memory_save with plan[].memory_save one by one (add author/role), then call blm_sync again with done = plan[].from of the items that succeeded"
+	}
+	return map[string]any{"plan": plan, "next": next}, nil
+}
+
+// ---- JSON-RPC over stdio -----------------------------------------------------
+
+type rpc struct {
+	ID     json.RawMessage `json:"id"`
+	Method string          `json:"method"`
+	Params struct {
+		ProtocolVersion string         `json:"protocolVersion"`
+		Name            string         `json:"name"`
+		Arguments       map[string]any `json:"arguments"`
+	} `json:"params"`
+}
+
+func (s *Server) Serve(in io.Reader, out io.Writer) {
+	sc := bufio.NewScanner(in)
+	sc.Buffer(make([]byte, 1<<20), 64<<20)
+	enc := json.NewEncoder(out)
+	send := func(id json.RawMessage, result any, rpcErr map[string]any) {
+		m := map[string]any{"jsonrpc": "2.0", "id": id}
+		if rpcErr != nil {
+			m["error"] = rpcErr
+		} else {
+			m["result"] = result
+		}
+		_ = enc.Encode(m)
+	}
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" {
+			continue
+		}
+		var msg rpc
+		if err := json.Unmarshal([]byte(line), &msg); err != nil {
+			send(nil, nil, map[string]any{"code": -32700, "message": "parse error"})
+			continue
+		}
+		if len(msg.ID) == 0 || string(msg.ID) == "null" {
+			continue // notifications (initialized, cancelled) — nothing to answer
+		}
+		switch msg.Method {
+		case "initialize":
+			pv := msg.Params.ProtocolVersion
+			if pv == "" {
+				pv = "2024-11-05"
+			}
+			send(msg.ID, map[string]any{"protocolVersion": pv, "capabilities": map[string]any{"tools": map[string]any{}}, "serverInfo": map[string]any{"name": "blm", "version": blm.Version}}, nil)
+		case "ping":
+			send(msg.ID, map[string]any{}, nil)
+		case "tools/list":
+			send(msg.ID, map[string]any{"tools": s.tools}, nil)
+		case "tools/call":
+			args := msg.Params.Arguments
+			if args == nil {
+				args = map[string]any{}
+			}
+			res, err := s.Call(msg.Params.Name, args)
+			if err != nil {
+				send(msg.ID, map[string]any{"content": []map[string]any{{"type": "text", "text": err.Error()}}, "isError": true}, nil)
+				continue
+			}
+			text, _ := json.MarshalIndent(res, "", "  ")
+			send(msg.ID, map[string]any{"content": []map[string]any{{"type": "text", "text": string(text)}}}, nil)
+		default:
+			send(msg.ID, nil, map[string]any{"code": -32601, "message": "method not found: " + msg.Method})
+		}
+	}
+}
+
+// Root โปรเจ็คที่ server ทำงานอยู่: BLM_ROOT หรือ cwd
+func Root() string {
+	if r := os.Getenv("BLM_ROOT"); r != "" {
+		return r
+	}
+	wd, _ := os.Getwd()
+	return wd
+}
