@@ -236,14 +236,14 @@ func short(s string) string {
 	return s
 }
 
-// PushAll ยิง memory_save **ทีละตัว** (2026-09-09: AgentsRoom รับขนานได้ตัวเดียว ตัวอื่นตอบ ok แต่ไม่เขียน)
-// แล้วตรวจด้วย memory_list ครั้งเดียวตอนจบ — ไม่ retry ไม่วน: ตัวที่ไม่เข้ารายงานพร้อมข้อความของ server แล้วปล่อยร่างไว้ใน store
-// archive เฉพาะที่ยืนยันแล้ว · deletes ยืนยันด้วยการหายจาก memory_list
-func (s *Store) PushAll(c *Client, plan []SyncItem, author, role string, deletes []string) ([]PushResult, []PushResult) {
+// PushAll ยิง memory_save ทีละตัว (ค่าเริ่ม) หรือขนานเมื่อ parallel=true — AgentsRoom เวอร์ชันที่ติดตั้ง 2026-09-09 รับขนานได้ตัวเดียว
+// (ตอบ ok แต่ไม่เขียน) เจ้าของแจ้งว่าเวอร์ชันใหม่แก้แล้ว จึงคง flag ไว้เปิดทีหลัง · ตรวจด้วย memory_list ครั้งเดียวตอนจบ ไม่ retry ไม่วน:
+// ตัวที่ไม่เข้ารายงานพร้อมข้อความของ server แล้วปล่อยร่างไว้ใน store · archive เฉพาะที่ยืนยันแล้ว · deletes ยืนยันด้วยการหายจาก list
+func (s *Store) PushAll(c *Client, plan []SyncItem, author, role string, deletes []string, parallel bool) ([]PushResult, []PushResult) {
 	start := time.Now().UTC().Add(-2 * time.Second).Format(time.RFC3339)
 	results := make([]PushResult, len(plan))
 	deleted := make([]PushResult, len(deletes))
-	for i, item := range plan {
+	save := func(i int, item SyncItem) {
 		t := time.Now()
 		text, err := c.CallTool("memory_save", saveArgs(item, author, role))
 		r := &results[i]
@@ -255,7 +255,7 @@ func (s *Store) PushAll(c *Client, plan []SyncItem, author, role string, deletes
 			r.Error = err.Error()
 		}
 	}
-	for i, name := range deletes {
+	del := func(i int, name string) {
 		t := time.Now()
 		text, err := c.CallTool("memory_delete", map[string]any{"name": name})
 		r := &deleted[i]
@@ -265,6 +265,25 @@ func (s *Store) PushAll(c *Client, plan []SyncItem, author, role string, deletes
 		r.OK = err == nil
 		if err != nil {
 			r.Error = err.Error()
+		}
+	}
+	if parallel {
+		var wg sync.WaitGroup
+		for i, item := range plan {
+			wg.Add(1)
+			go func(i int, item SyncItem) { defer wg.Done(); save(i, item) }(i, item)
+		}
+		for i, name := range deletes {
+			wg.Add(1)
+			go func(i int, name string) { defer wg.Done(); del(i, name) }(i, name)
+		}
+		wg.Wait()
+	} else {
+		for i, item := range plan {
+			save(i, item)
+		}
+		for i, name := range deletes {
+			del(i, name)
 		}
 	}
 	listed, err := c.ListNotes()

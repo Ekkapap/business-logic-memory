@@ -77,7 +77,7 @@ func tools(c blm.Config) []tool {
 			obj(map[string]any{"event": enum("", "lookup", "override", "fixed"), "query": str(""), "topic": str(""), "note": str(""), "count": map[string]any{"type": "number"}}, "event")},
 		{"blm_tools", "Manage neighbour tools (socraticode | obsidian | graphify): status · get · install · start · stop · restart · gen-graph · help — acts when it knows the command, otherwise returns the command for the user to run",
 			obj(map[string]any{"action": enum("", "status", "get", "install", "start", "stop", "restart", "gen-graph", "help"), "tool": enum("", "socraticode", "obsidian", "graphify"), "docker": map[string]any{"type": "boolean", "description": "socraticode: run Qdrant + Ollama in Docker instead of native (required on Windows)"}}, "action")},
-		{"blm_sync", "push: sync temp notes into the backend. apply=true (preferred): blm spawns the AgentsRoom MCP itself, runs memory_save one note at a time (AgentsRoom silently drops parallel saves), verifies with memory_list once, archives only what is verified and returns ok/verified/error per note — no retries — no note content passes through your context. Without apply: returns the plan for you to execute by hand. pull: refresh mirror/store from the backend before reading rules",
+		{"blm_sync", "push: sync temp notes into the backend. apply=true (preferred): blm spawns the AgentsRoom MCP itself, runs memory_save one note at a time (parallel:true to send all at once once the AgentsRoom build supports it), verifies with memory_list once, archives only what is verified and returns ok/verified/error per note — no retries — no note content passes through your context. Without apply: returns the plan for you to execute by hand. pull: refresh mirror/store from the backend before reading rules",
 			obj(map[string]any{
 				"direction": enum("push (default) | pull", "push", "pull"),
 				"apply":     map[string]any{"type": "boolean", "description": "true = blm performs the memory_save/memory_delete calls itself (parallel) and archives; false = return the plan only"},
@@ -88,6 +88,7 @@ func tools(c blm.Config) []tool {
 				"names":     strArr("restrict the plan to these notes (omit = all)"),
 				"full":      map[string]any{"type": "boolean", "description": "manual mode only: include note bodies in the plan (default false — bodies stay out of your context)"},
 				"restore":   strArr("move these notes back from .synced/ into the store (recover items archived by an earlier push that did not really land)"),
+				"parallel":  map[string]any{"type": "boolean", "description": "with apply: send all saves at once instead of one by one (default false — the AgentsRoom build installed on 2026-09-09 drops concurrent saves; enable after it is updated)"},
 			})},
 	}
 	if !c.HasSync() {
@@ -231,12 +232,13 @@ func (s *Server) Call(name string, a map[string]any) (any, error) {
 			}
 			return map[string]any{"ok": true, "restored": back}, nil
 		}
-		return s.sync(getStr(a, "direction"), getArr(a, "done"), getArr(a, "names"), apply, getStr(a, "author"), getStr(a, "role"), getArr(a, "delete"), full)
+		par, _ := a["parallel"].(bool)
+		return s.sync(getStr(a, "direction"), getArr(a, "done"), getArr(a, "names"), apply, getStr(a, "author"), getStr(a, "role"), getArr(a, "delete"), full, par)
 	}
 	return nil, fmt.Errorf("unknown tool %s", name)
 }
 
-func (s *Server) sync(direction string, done, names []string, apply bool, author, role string, deletes []string, full bool) (any, error) {
+func (s *Server) sync(direction string, done, names []string, apply bool, author, role string, deletes []string, full, parallel bool) (any, error) {
 	if direction == "pull" {
 		if s.cfg.Backend == blm.BackendCustom {
 			return map[string]any{"command": s.cfg.PullCommand, "next": "run command via Bash, then read the rules again with blm"}, nil
@@ -302,7 +304,7 @@ func (s *Server) sync(direction string, done, names []string, apply bool, author
 			role = "fullstack"
 		}
 		t := time.Now()
-		pushed, deleted := s.store.PushAll(c, plan, author, role, deletes)
+		pushed, deleted := s.store.PushAll(c, plan, author, role, deletes, parallel)
 		failed := 0
 		for _, r := range pushed {
 			if !r.Verified {

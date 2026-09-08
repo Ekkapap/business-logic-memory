@@ -116,7 +116,7 @@ func TestPushAllParallel(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Close()
-	pushed, deleted := s.PushAll(c, s.PlanSync(s.List()), "tester", "qa", []string{"old-note"})
+	pushed, deleted := s.PushAll(c, s.PlanSync(s.List()), "tester", "qa", []string{"old-note"}, false)
 	ok := 0
 	for _, r := range pushed {
 		if r.Verified {
@@ -131,6 +131,31 @@ func TestPushAllParallel(t *testing.T) {
 	}
 	if left := s.List(); len(left) != 1 || left[0].Name != "boom" {
 		t.Fatalf("only the failed note must remain: %+v", left)
+	}
+	// โหมดขนานกับ server จำลองที่รับทีละตัว: ต้องรายงานว่าไม่เข้า (ไม่ retry) และร่างยังอยู่
+	for _, n := range []string{"p1", "p2", "p3"} {
+		_, _ = s.Save(Input{Name: n, Content: "x", HasContent: true, Description: "d"})
+	}
+	t0 := time.Now()
+	par, _ := s.PushAll(c, s.PlanSync(s.List()), "tester", "qa", nil, true)
+	if time.Since(t0) > 900*time.Millisecond {
+		t.Fatal("parallel mode must not serialise")
+	}
+	verified, kept := 0, 0
+	for _, r := range par {
+		if r.Verified {
+			verified++
+		} else if r.Error == "" {
+			t.Fatalf("unverified item must carry an error: %+v", r)
+		}
+	}
+	for _, n := range s.List() {
+		if strings.HasPrefix(n.Name, "p") {
+			kept++
+		}
+	}
+	if verified >= len(par) || kept != len(par)-verified {
+		t.Fatalf("parallel: verified %d kept %d of %d", verified, kept, len(par))
 	}
 }
 
