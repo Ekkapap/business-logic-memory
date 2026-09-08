@@ -2,6 +2,7 @@ package blm
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -36,8 +37,9 @@ func (s *Store) conflictsDir() string { return filepath.Join(s.Dir, "conflicts")
 
 var (
 	conflictFileRe = regexp.MustCompile(`^\[(wait|done)\] (.+)\.md$`)
-	conflictTagRe  = regexp.MustCompile(`\s*\[Conflict: [^\]]*\]`)
-	checkedRe      = regexp.MustCompile(`(?m)^- \[[xX]\] `)
+	// ป้ายเป็นลิงก์คลิกได้ไปที่รายงาน (เจ้าของ 2026-09-09: "#1 คลิกไม่ได้") · regex ครอบทั้งรูปเก่า [Conflict: #1, #2] และรูปลิงก์ ติดกันหลายอัน
+	conflictTagRe = regexp.MustCompile(`(\s*\[Conflict: [^\]]*\](\([^)]*\))?)+`)
+	checkedRe     = regexp.MustCompile(`(?m)^- \[[xX]\] `)
 )
 
 // ListConflicts อ่านรายงานทั้งหมด (wait ก่อน done) — ใช้ใน blm_conflicts และแนบใน blm (Rules)
@@ -232,12 +234,12 @@ func (s *Store) OpenConflict(name, topic, heading, reason string) ([]ConflictRep
 		id := next
 		next++
 		ids = append(ids, "#"+strconv.Itoa(id))
+		out = append(out, fmt.Sprintf("<<<<<<< #%d >>>>>>>", id))
+		file := filepath.Join(s.conflictsDir(), fmt.Sprintf("[wait] %s-%s.md", slug(heading), time.Now().Format("20060102150405")))
 		if _, ok := noteHeads[lastHead]; !ok {
 			headOrder = append(headOrder, lastHead)
 		}
-		noteHeads[lastHead] = append(noteHeads[lastHead], "#"+strconv.Itoa(id))
-		out = append(out, fmt.Sprintf("<<<<<<< #%d >>>>>>>", id))
-		file := filepath.Join(s.conflictsDir(), fmt.Sprintf("[wait] %s-%s.md", slug(heading), time.Now().Format("20060102150405")))
+		noteHeads[lastHead] = append(noteHeads[lastHead], tagFor(id, file))
 		// ส่วนต่างล้วน ๆ ระหว่างสอง block (เจ้าของ 2026-09-09: อ่านสอง block เต็มแล้วบอกไม่ได้ว่าอันไหนถูก) — บรรทัดที่เท่ากันไม่ต้องอ่าน
 		only, _ := LineDiff(strings.Join(a, "\n"), strings.Join(b, "\n"))
 		var onlyA, onlyB []string
@@ -269,6 +271,9 @@ cloudUpdatedAt: %s
 
 # ความขัดแย้ง #%d — %s › %s
 
+**โน้ตที่ชน:** %s (AgentsRoom: %s › %s) ตรงหัวข้อ "%s"
+**เรื่องใน blm.md:** %s › %s
+
 **ทำไม agent ตัดสินเองไม่ได้:** %s
 
 ## ต่างกันตรงไหน (อ่านแค่ส่วนนี้ก็พอ)
@@ -297,7 +302,7 @@ cloudUpdatedAt: %s
 
 ### B — ร่างในเครื่อง
 `+"```text\n%s\n```"+`
-`, id, name, draft.Target, topic, heading, lastHead, now, cloud.UpdatedAt, id, topic, heading, strings.TrimSpace(reason), cloud.UpdatedAt, quote(onlyA), quote(onlyB), name, id, strings.Join(a, "\n"), strings.Join(b, "\n"))
+`, id, name, draft.Target, topic, heading, lastHead, now, cloud.UpdatedAt, id, topic, heading, s.rel(filepath.Join(s.Dir, name+".md")), folder, draft.Target, strings.TrimPrefix(strings.TrimPrefix(lastHead, "## "), "# "), topic, heading, strings.TrimSpace(reason), cloud.UpdatedAt, quote(onlyA), quote(onlyB), name, id, strings.Join(a, "\n"), strings.Join(b, "\n"))
 		if err := os.WriteFile(file, []byte(body), 0o644); err != nil {
 			return nil, err
 		}
@@ -319,6 +324,11 @@ cloudUpdatedAt: %s
 	return reports, nil
 }
 
+// tagFor = `[Conflict: #n](conflicts/<report>)` ลิงก์ relative จากโน้ตใน store (blm.md และโน้ตอื่นอยู่โฟลเดอร์เดียวกัน) เว้นวรรค/วงเล็บถูก escape
+func tagFor(id int, reportPath string) string {
+	return "[Conflict: #" + strconv.Itoa(id) + "](conflicts/" + url.PathEscape(filepath.Base(reportPath)) + ")"
+}
+
 // tagLine ติดป้ายที่บรรทัดหัวข้อที่ตรงกับ head (เทียบหลังตัดป้ายเดิม) — ใช้กับหัวข้อในโน้ตที่ชน
 func tagLine(content, head string, ids []string) string {
 	if head == "" || len(ids) == 0 {
@@ -327,7 +337,7 @@ func tagLine(content, head string, ids []string) string {
 	lines := strings.Split(content, "\n")
 	for i, l := range lines {
 		if conflictTagRe.ReplaceAllString(l, "") == head {
-			lines[i] = conflictTagRe.ReplaceAllString(l, "") + " [Conflict: " + strings.Join(ids, ", ") + "]"
+			lines[i] = conflictTagRe.ReplaceAllString(l, "") + " " + strings.Join(ids, " ")
 		}
 	}
 	return strings.Join(lines, "\n")
@@ -353,7 +363,7 @@ func (s *Store) refreshRuleTags() {
 		if _, ok := groups[k]; !ok {
 			order = append(order, k)
 		}
-		groups[k] = append(groups[k], "#"+strconv.Itoa(c.ID))
+		groups[k] = append(groups[k], tagFor(c.ID, filepath.Join(s.Root, c.File)))
 	}
 	content := conflictTagRe.ReplaceAllString(rules.Content, "")
 	for _, k := range order {
@@ -371,7 +381,7 @@ func tagHeading(content, topic, heading string, ids []string) string {
 	lines := strings.Split(content, "\n")
 	tag := ""
 	if len(ids) > 0 {
-		tag = " [Conflict: " + strings.Join(ids, ", ") + "]"
+		tag = " " + strings.Join(ids, " ")
 	}
 	inTopic := false
 	for i, l := range lines {
@@ -454,7 +464,7 @@ func (s *Store) ResolveConflicts(name string) (map[string]any, error) {
 			if _, ok := byHead[c.NoteHeading]; !ok {
 				hOrder = append(hOrder, c.NoteHeading)
 			}
-			byHead[c.NoteHeading] = append(byHead[c.NoteHeading], tag)
+			byHead[c.NoteHeading] = append(byHead[c.NoteHeading], tagFor(c.ID, filepath.Join(s.Root, c.File)))
 		}
 		for _, h := range hOrder {
 			content = tagLine(content, h, byHead[h])
