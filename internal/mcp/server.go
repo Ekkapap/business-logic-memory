@@ -88,7 +88,7 @@ func tools(c blm.Config) []tool {
 			obj(map[string]any{"event": enum("", "lookup", "override", "fixed"), "query": str(""), "topic": str(""), "note": str(""), "count": map[string]any{"type": "number"}}, "event")},
 		{"blm_tools", "Manage neighbour tools (socraticode | obsidian | graphify): status · get · install · start · stop · restart · gen-graph · help — acts when it knows the command, otherwise returns the command for the user to run",
 			obj(map[string]any{"action": enum("", "status", "get", "install", "start", "stop", "restart", "gen-graph", "help"), "tool": enum("", "socraticode", "obsidian", "graphify"), "docker": map[string]any{"type": "boolean", "description": "socraticode: run Qdrant + Ollama in Docker instead of native (required on Windows)"}}, "action")},
-		{"blm_sync", "push: sync temp notes into the backend. apply=true (preferred): blm spawns the AgentsRoom MCP itself, runs memory_save one note at a time (parallel:true to send all at once once the AgentsRoom build supports it), verifies with memory_list once, archives only what is verified and returns ok/verified/error per note — no retries — no note content passes through your context. Without apply: returns the plan for you to execute by hand. pull: refresh mirror/store from the backend before reading rules",
+		{"blm_sync", "push: sync temp notes into the backend. apply=true (preferred): blm spawns the AgentsRoom MCP itself, runs memory_save one note at a time (parallel:true to send all at once once the AgentsRoom build supports it), verifies with memory_list once, archives only what is verified and returns ok/verified/error per note — no retries — no note content passes through your context. Without apply: returns the plan for you to execute by hand. pull: refresh the mirror from the backend, then update clean local copies in the store (local edits are never overwritten; dirty + cloud changed = listed as conflict)",
 			obj(map[string]any{
 				"direction": enum("push (default) | pull", "push", "pull"),
 				"apply":     map[string]any{"type": "boolean", "description": "true = blm performs the memory_save/memory_delete calls itself (parallel) and archives; false = return the plan only"},
@@ -307,7 +307,8 @@ func (s *Server) sync(direction string, done, names []string, apply bool, author
 			if _, err := c.CallTool("memory_list", map[string]any{}); err != nil {
 				return nil, err
 			}
-			return map[string]any{"ok": true, "ms": time.Since(t).Milliseconds(), "next": "mirror " + s.cfg.Mirror + " refreshed — call blm again"}, nil
+			pr := s.store.Pull()
+			return map[string]any{"ok": true, "ms": time.Since(t).Milliseconds(), "pull": pr, "next": "mirror " + s.cfg.Mirror + " refreshed and clean local copies updated — conflicts (local edits + cloud changed) need blm_diff / blm_merge"}, nil
 		}
 		return map[string]any{"next": "call AgentsRoom `memory_list` to force a fresh fetch (mirror " + s.cfg.Mirror + " is overwritten with the real notes), then call blm again — or blm_sync {direction:pull, apply:true}"}, nil
 	}

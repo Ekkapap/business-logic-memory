@@ -37,7 +37,7 @@ description: How to record project knowledge during a session without blocking o
 
 ## แก้บางบรรทัดของโน้ตปลายทางที่มีอยู่แล้ว
 
-- **ห้าม** `memory_get` มาทั้งก้อนแล้ว `memory_save` กลับ (เนื้อโน้ตวิ่งผ่าน context สองรอบ) → ใช้ `blm_edit { target, find, replace }` blm อ่านโน้ตจาก mirror บนดิสก์ แทนข้อความ (ต้องพบพอดี 1) แล้วเก็บเป็นร่าง replace ใน temp คืนมาแค่ 3 บรรทัดรอบจุดแก้ แก้ซ้ำได้ต่อจากร่างเดิม
+- **ห้าม** `memory_get` มาทั้งก้อนแล้ว `memory_save` กลับ (เนื้อโน้ตวิ่งผ่าน context สองรอบ) → ใช้ `blm_edit { target, find, replace }` blm ใช้สำเนา local ใน store (ครั้งแรก checkout จาก mirror มาเก็บพร้อม base) แทนข้อความ (ต้องพบพอดี 1) แล้วเก็บเป็นร่าง replace ใน store คืนมาแค่ 3 บรรทัดรอบจุดแก้ แก้ซ้ำได้ต่อจากร่างเดิม
 - section ใหม่ของโน้ตเดิม → `blm_save { name: "<target>-<วันที่>", target, content }` (mode append) ตามเดิม
 
 ## ตอนเจ้าของสั่ง "update memory" (มีเฉพาะ backend ที่มีปลายทาง: agentsroom/custom)
@@ -45,7 +45,8 @@ description: How to record project knowledge during a session without blocking o
 1. `blm_sync { apply: true, author: "<ชื่อคุณ>", role: "<role id>" }` — **blm ทำเองทั้งหมด**: spawn AgentsRoom MCP, ยิง `memory_save` ทีละตัว (AgentsRoom รับขนานได้ตัวเดียว พิสูจน์ 2026-09-09) ตรวจด้วย `memory_list` ครั้งเดียว archive เฉพาะที่ยืนยันแล้วไป `.synced/` คืน ok/verified/error ต่อโน้ต ไม่ retry เอง เนื้อโน้ตไม่ผ่าน context ของคุณเลย (เจ้าของกำหนด 2026-09-09) · ใส่ `delete: ["ชื่อเก่า"]` เมื่อโน้ตถูกเปลี่ยนชื่อ (เช่น `project-business-logic` → `blm`)
 2. อ่าน `warnings` และรายการ `failed` ถ้ามี — รายการที่ล้มยังอยู่ใน temp เรียกซ้ำได้ด้วย `names` · error ที่ขึ้นต้น `conflict:` = มีคนแก้โน้ตบน cloud หลังร่างถูกสร้าง → `blm_diff {name}` ดูบรรทัดที่ต่างทั้งสองฝั่ง แล้วให้เจ้าของเลือก `blm_merge {name, keep: mine|cloud|content}` (mine = ใส่การแก้ของเราทับ cloud ปัจจุบันแบบ 3 ทาง ชนกันจะปฏิเสธ · content = รวมมือ) ห้ามตัดสินเองว่าฝั่งไหนชนะ · **เจ้าของไม่อยู่/ยังไม่ตอบ** (งานยาว กลางคืน) → `blm_conflict {name, topic, heading, reason}` ออกรายงานต่อบริเวณที่ชนไว้ที่ `conflicts/<id>-….wait.md` (block A cloud / block B ร่าง มี checkbox แก้ก่อนติ๊กได้) ป้าย `[Conflict: #n]` ขึ้นที่หัวข้อย่อยในร่าง แล้วทำงานอื่นต่อ ร่างนั้นห้าม push · เจ้าของติ๊กแล้วสั่ง "resolve" → `blm_resolve {name}` · `blm_conflicts` ดูว่าเหลืออะไร (`/blm` ก็แสดง conflicts ที่ค้าง)
 3. ห้ามเรียก `memory_save` เองแทนขั้นตอนนี้ เว้นแต่ `blm_sync` ตอบว่าไม่พบ AgentsRoom MCP ใน `.mcp.json` (เปิดโปรเจ็คใน AgentsRoom หนึ่งครั้งให้มันเขียน) ค่อยใช้แผนจาก `blm_sync` (ไม่ใส่ apply) ยิงขนานเอง
-- `blm_sync { direction: "pull", apply: true }` ก่อนอ่านกฎเมื่อสงสัยว่า mirror เก่า (blm เรียก `memory_list` ให้ mirror สดเอง)
+- `blm_sync { direction: "pull", apply: true }` เมื่อสงสัยว่า backend เปลี่ยน: blm เรียก `memory_list` ให้ mirror สด แล้วเทียบ mirror กับสำเนา local ทุกฉบับ สำเนาที่ไม่ได้แก้และ cloud ใหม่กว่า → ดึงทับ · แก้ค้างอยู่และ cloud ก็เปลี่ยน → รายงาน conflict ไม่ทับ (blm_diff/blm_merge)
+- หลักการ: **store คือ local memory ที่ทำงานจริง** (`blm.md` อยู่ที่ `.agentsroom/blm/blm.md`) mirror คือสำเนาของ backend ไว้เทียบว่าใครใหม่กว่า ไม่ใช่ที่แก้ · push สำเร็จแล้วสำเนา local อยู่ต่อ (state synced) แค่ base เลื่อน · store มีไฟล์มากกว่า backend เสมอ (ร่าง รายงาน กราฟ) แต่ blm.md ต้องมีทั้งสองที่
 - backend none/obsidian: ไม่มี `blm_sync` เลย — ไฟล์ใน store คือของจริง
 
 ## กฎธุรกิจ — `blm.md` (source of truth เดียว)

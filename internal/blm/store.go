@@ -24,6 +24,8 @@ type Note struct {
 	// Base = updatedAt ของโน้ตปลายทาง (จาก mirror) ตอนที่ร่าง replace นี้ถูกสร้าง — ใช้ตรวจว่า cloud เปลี่ยนไปหลังจากนั้นไหม
 	Base    string `json:"base,omitempty"`
 	Content string `json:"content"`
+	// Dirty = เนื้อหาต่างจาก .base (สำเนาที่ดึงมาครั้งล่าสุด) — โน้ตที่ไม่มี base ถือว่า dirty (ร่างใหม่)
+	Dirty bool `json:"dirty"`
 }
 
 // Input ค่าที่ agent ส่งมา — ช่องว่างหมายถึง "คงของเดิม"
@@ -104,6 +106,7 @@ func (s *Store) List() []Note {
 			continue
 		}
 		if n, err := s.Get(strings.TrimSuffix(e.Name(), ".md")); err == nil {
+			n.Dirty = s.IsDirty(n)
 			notes = append(notes, n)
 		}
 	}
@@ -293,6 +296,17 @@ func (s *Store) PlanSync(notes []Note) []SyncItem {
 	var plan []SyncItem
 	for _, target := range order {
 		g := groups[target]
+		// สำเนา local ที่ยังตรงกับ .base (ดึงมาแล้วไม่ได้แก้) ไม่มีอะไรจะส่ง — ตัดออกจากกลุ่ม ไม่งั้น blm.md ถูก push ทุกรอบ
+		var dirty []Note
+		for _, n := range g {
+			if n.Base == "" || s.IsDirty(n) {
+				dirty = append(dirty, n)
+			}
+		}
+		if len(dirty) == 0 {
+			continue
+		}
+		g = dirty
 		mirrorFolder, exists := s.FindTargetFolder(target)
 		item := SyncItem{TargetExists: exists, Warnings: []string{}}
 		mode, modes := "append", map[string]bool{}
@@ -439,23 +453,10 @@ func (s *Store) Edit(target, find, replace string) (Note, string, error) {
 			return Note{}, "", fmt.Errorf("edit %q: temp note exists with mode append (a new section, not the whole note) — blm_patch it instead", target)
 		}
 	} else {
-		folder, ok := s.FindTargetFolder(target)
-		if !ok {
-			return Note{}, "", fmt.Errorf("edit %q: not found in mirror or temp — use blm_save to create it", target)
+		var err error
+		if src, err = s.Checkout(target); err != nil {
+			return Note{}, "", fmt.Errorf("edit %q: %v — use blm_save to create it", target, err)
 		}
-		raw, err := os.ReadFile(filepath.Join(s.MirrorDir, folder, target+".md"))
-		if err != nil {
-			return Note{}, "", err
-		}
-		src = parseNote(target, string(raw))
-		src.Target, src.Mode = target, "replace"
-		if src.Folder == "" {
-			src.Folder = folder
-		}
-		// จำจุดตั้งต้น: updatedAt ของ mirror + สำเนาเนื้อหา (สำหรับ blm_diff 3 ทาง)
-		src.Base = src.UpdatedAt
-		_ = os.MkdirAll(filepath.Join(s.Dir, ".base"), 0o755)
-		_ = os.WriteFile(filepath.Join(s.Dir, ".base", target+".md"), []byte(src.Content), 0o644)
 	}
 	if hits := strings.Count(src.Content, find); hits != 1 {
 		return Note{}, "", fmt.Errorf("edit %q: find matched %d times, must match exactly once", target, hits)
@@ -466,6 +467,102 @@ func (s *Store) Edit(target, find, replace string) (Note, string, error) {
 		return Note{}, "", err
 	}
 	return n, contextAround(content, replace, 3), nil
+}
+
+// Checkout ดึงโน้ตจาก mirror มาเป็นสำเนา local ใน store (mode replace, Base = updatedAt ของ mirror, .base/<name>.md = เนื้อหาตอนดึง)
+// concept เจ้าของ 2026-09-09: blm คือ local memory — แก้ที่ store ก่อน แล้ว sync ขึ้น backend · mirror มีไว้เทียบ ไม่ใช่ที่ทำงาน
+func (s *Store) Checkout(target string) (Note, error) {
+	folder, ok := s.FindTargetFolder(target)
+	if !ok {
+		return Note{}, fmt.Errorf("%q not found in mirror", target)
+	}
+	mp := filepath.Join(s.MirrorDir, folder, target+".md")
+	raw, err := os.ReadFile(mp)
+	if err != nil {
+		return Note{}, err
+	}
+	src := parseNote(target, string(raw))
+	src.Target, src.Mode = target, "replace"
+	if src.Folder == "" {
+		src.Folder = folder
+	}
+	src.Base = mirrorStamp(src, mp)
+	_ = os.MkdirAll(filepath.Join(s.Dir, ".base"), 0o755)
+	_ = os.WriteFile(filepath.Join(s.Dir, ".base", target+".md"), []byte(src.Content), 0o644)
+	n, err := s.save(Input{Name: target, Target: target, Mode: "replace", Folder: src.Folder, Description: src.Description, Tags: src.Tags, Content: src.Content, HasContent: true, Base: src.Base}, "checkout")
+	return n, err
+}
+
+// mirrorStamp = updatedAt ของโน้ตใน mirror · ไม่มี frontmatter (backend อื่น/ไฟล์เขียนมือ) → mtime ของไฟล์ ให้ Base ไม่ว่างเสมอ
+func mirrorStamp(n Note, path string) string {
+	if n.UpdatedAt != "" {
+		return n.UpdatedAt
+	}
+	if fi, err := os.Stat(path); err == nil {
+		return fi.ModTime().UTC().Format(time.RFC3339)
+	}
+	return "0"
+}
+
+// IsDirty — เนื้อหาต่างจากสำเนา .base ไหม (ไม่มี .base = ร่างใหม่ = dirty)
+func (s *Store) IsDirty(n Note) bool {
+	base, err := os.ReadFile(filepath.Join(s.Dir, ".base", n.Name+".md"))
+	if err != nil {
+		return true
+	}
+	return strings.TrimSpace(string(base)) != strings.TrimSpace(n.Content)
+}
+
+// Rebase หลัง push สำเร็จ: สำเนา local ยังอยู่ (ไม่ archive) แต่ .base และ Base เลื่อนมาที่สถานะที่ backend รับแล้ว
+func (s *Store) Rebase(name, updatedAt string) error {
+	n, err := s.Get(name)
+	if err != nil {
+		return err
+	}
+	_ = os.MkdirAll(filepath.Join(s.Dir, ".base"), 0o755)
+	if err := os.WriteFile(filepath.Join(s.Dir, ".base", name+".md"), []byte(n.Content), 0o644); err != nil {
+		return err
+	}
+	_, err = s.save(Input{Name: name, Base: updatedAt}, "synced")
+	return err
+}
+
+// PullResult ผลการดึง mirror → store หลัง backend refresh
+type PullResult struct {
+	Refreshed []string `json:"refreshed"` // สำเนาสะอาด ที่ cloud ใหม่กว่า → เขียนทับ
+	Conflicts []string `json:"conflicts"` // แก้ local ค้างอยู่ และ cloud ก็เปลี่ยน → ไม่แตะ ให้ blm_diff/blm_merge
+	UpToDate  []string `json:"upToDate"`
+}
+
+// Pull เทียบทุกสำเนา local (มี Base) กับ mirror · cloud ใหม่กว่าและ local สะอาด → ดึงทับ · local dirty → รายงาน conflict ไม่ทับ
+func (s *Store) Pull() PullResult {
+	var r PullResult
+	for _, n := range s.List() {
+		if n.Base == "" {
+			continue
+		}
+		folder, ok := s.FindTargetFolder(n.Target)
+		if !ok {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(s.MirrorDir, folder, n.Target+".md"))
+		if err != nil {
+			continue
+		}
+		cloud := parseNote(n.Target, string(raw))
+		if mirrorStamp(cloud, filepath.Join(s.MirrorDir, folder, n.Target+".md")) <= n.Base {
+			r.UpToDate = append(r.UpToDate, n.Name)
+			continue
+		}
+		if n.Dirty {
+			r.Conflicts = append(r.Conflicts, n.Name)
+			continue
+		}
+		if _, err := s.Checkout(n.Target); err == nil {
+			r.Refreshed = append(r.Refreshed, n.Name)
+		}
+	}
+	return r
 }
 
 // contextAround บรรทัดรอบข้อความ (สำหรับให้ agent เห็นว่าแก้ถูกที่ โดยไม่ต้องอ่านทั้งโน้ต)

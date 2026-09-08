@@ -327,6 +327,11 @@ func (s *Store) PushAll(c *Client, plan []SyncItem, author, role string, deletes
 			continue
 		}
 		for _, from := range results[i].From {
+			// สำเนา local (มี Base) อยู่ต่อใน store — เลื่อน base ไปที่เวอร์ชันที่ backend รับแล้ว · ร่าง append ค่อย archive
+			if fn, err := s.Get(from); err == nil && fn.Base != "" && fn.Mode == "replace" {
+				_ = s.Rebase(from, n.UpdatedAt)
+				continue
+			}
 			if p, err := s.Archive(from); err == nil {
 				results[i].Archived = append(results[i].Archived, p)
 			}

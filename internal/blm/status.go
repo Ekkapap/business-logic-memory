@@ -403,13 +403,17 @@ func RenderStatus(st Status) string {
 		b.WriteString("No blm.md yet — run /blm_init in Claude Code\n")
 	}
 
-	b.WriteString(Section(fmt.Sprintf("Temp Notes  (%d files · %s · history %d · reports %d)", len(st.Notes), humanBytes(st.NotesBytes), st.History, st.Reports)) + "\n")
+	b.WriteString(Section(fmt.Sprintf("Local Notes  (%d files · %s · history %d · reports %d)", len(st.Notes), humanBytes(st.NotesBytes), st.History, st.Reports)) + "\n")
 	if len(st.Notes) > 0 {
 		var tr [][]string
 		for i, n := range st.Notes {
-			tr = append(tr, []string{itoa(i+1) + ".", Cyan(n.Name), n.Target, n.Mode, shortTime(n.UpdatedAt)})
+			state := Green("synced")
+			if n.Dirty {
+				state = Yellow("edited")
+			}
+			tr = append(tr, []string{itoa(i+1) + ".", Cyan(n.Name), n.Target, n.Mode, state, shortTime(n.UpdatedAt)})
 		}
-		b.WriteString(Table([]string{"#", "Name", "Target", "Mode", "Updated"}, tr) + "\n")
+		b.WriteString(Table([]string{"#", "Name", "Target", "Mode", "State", "Updated"}, tr) + "\n")
 	} else {
 		b.WriteString("none\n")
 	}

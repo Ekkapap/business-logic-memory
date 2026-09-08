@@ -41,14 +41,16 @@ type RulesResult struct {
 	Conflicts []ConflictReport `json:"conflicts"`
 }
 
-// RulesPath ไฟล์กฎที่เป็นของจริง: mirror (agentsroom) หรือ store เอง (none/obsidian/custom) — "" = ยังไม่มี
+// RulesPath ไฟล์กฎที่ใช้งาน = สำเนา local ใน store เสมอ (concept เจ้าของ 2026-09-09: แก้ local ก่อน แล้ว sync)
+// ยังไม่มีใน store แต่มีใน mirror → checkout มาก่อนครั้งแรก · "" = ยังไม่มีที่ไหนเลย
 func (s *Store) RulesPath() string {
-	if folder, ok := s.FindTargetFolder(RulesNote); ok {
-		return filepath.Join(s.MirrorDir, folder, RulesNote+".md")
-	}
-	// ไม่มีใน mirror (หรือไม่มี mirror) → ร่างใน store ใช้แทนได้ ดีกว่าตอบว่าไม่มีกฎเลย (Rules() บอกว่าเป็น draft)
 	if s.Has(RulesNote) {
 		return filepath.Join(s.Dir, RulesNote+".md")
+	}
+	if _, ok := s.FindTargetFolder(RulesNote); ok {
+		if _, err := s.Checkout(RulesNote); err == nil {
+			return filepath.Join(s.Dir, RulesNote+".md")
+		}
 	}
 	return ""
 }
@@ -70,7 +72,7 @@ func (s *Store) Rules(query, trigger string) RulesResult {
 	}
 	if s.HasMirror() {
 		for _, n := range s.List() {
-			if n.Target == RulesNote {
+			if n.Target == RulesNote && n.Dirty {
 				res.PendingDrafts = append(res.PendingDrafts, n.Name)
 			}
 		}
@@ -88,8 +90,8 @@ func (s *Store) Rules(query, trigger string) RulesResult {
 	}
 	_, offset, body := splitFront(string(raw))
 	res.Source = s.rel(path)
-	if s.HasMirror() && strings.HasPrefix(path, s.Dir) {
-		res.Message = "rules come from the temp draft in " + res.Source + " — not synced to the backend yet (blm_sync when the owner confirms)"
+	if s.HasMirror() && len(res.PendingDrafts) > 0 {
+		res.Message = "local edits in " + res.Source + " not synced to the backend yet (blm_sync {apply:true} when the owner confirms)"
 	}
 	all := SplitBlocks(body, offset, res.Source, path)
 	q := strings.ToLower(strings.TrimSpace(query))

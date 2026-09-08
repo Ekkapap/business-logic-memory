@@ -97,19 +97,22 @@ func TestRulesFromStoreAndMirror(t *testing.T) {
 		t.Fatalf("TopicCount %d %d", topics, rulesN)
 	}
 
-	// backend agentsroom: กฎอยู่ใน mirror, โน้ต temp ชื่อเดียวกัน = draft
+	// backend agentsroom: กฎถูก checkout จาก mirror มาเป็นสำเนา local ใน store (อ่านจาก store เสมอ) · ร่าง append ชื่ออื่นที่เล็ง blm = pending
 	s2, _, root2 := tmpStore(t, BackendAgentsRoom)
 	dir := filepath.Join(root2, ".agentsroom", "memory", "global", "conventions")
 	_ = os.MkdirAll(dir, 0o755)
 	_ = os.WriteFile(filepath.Join(dir, "blm.md"), []byte(rules), 0o644)
 	_, _ = s2.Save(Input{Name: "blm-draft", Target: "blm", Content: "x", HasContent: true})
 	r2 := s2.Rules("", "agent")
-	if r2.Source != ".agentsroom/memory/global/conventions/blm.md" || len(r2.PendingDrafts) != 1 {
-		t.Fatalf("mirror: %+v", r2)
+	if r2.Source != ".agentsroom/blm/blm.md" || len(r2.PendingDrafts) != 1 || r2.PendingDrafts[0] != "blm-draft" {
+		t.Fatalf("local copy: %+v", r2)
+	}
+	if link, err := os.Readlink(filepath.Join(root2, ".agentsroom", "blm.md")); err != nil || link != "blm/blm.md" {
+		t.Fatalf("short link must point at the local copy, got %q %v", link, err)
 	}
 	plan := s2.PlanSync(s2.List())
-	if len(plan) != 1 || plan[0].MemorySave.Folder != "global/conventions" || !plan[0].TargetExists {
-		t.Fatalf("plan: %+v", plan)
+	if len(plan) != 1 || plan[0].MemorySave.Folder != "global/conventions" || !plan[0].TargetExists || len(plan[0].From) != 1 {
+		t.Fatalf("plan must carry only the dirty draft, not the clean copy: %+v", plan)
 	}
 	g := s2.GainSummary()
 	if g.Reads != 1 || g.ReadsByAgent != 1 {
@@ -323,4 +326,46 @@ func TestForEachCoversAll(t *testing.T) {
 		}
 	}
 	forEach(0, 4, func(int) { t.Fatal("must not run") })
+}
+
+func TestRulesAreLocalFirst(t *testing.T) {
+	root := t.TempDir()
+	mirror := filepath.Join(root, "mirror", "global", "conventions")
+	_ = os.MkdirAll(mirror, 0o755)
+	_ = os.WriteFile(filepath.Join(mirror, "blm.md"), []byte("---\nname: \"blm\"\nfolder: \"global / conventions\"\nupdatedAt: \"2026-09-01T00:00:00Z\"\n---\n\n# Auth\n\n## Login\nmemory: rule A\n"), 0o644)
+	s := Open(root, Config{Store: "store", Mirror: "mirror"})
+	r := s.Rules("", "test")
+	if r.Source != "store/blm.md" || len(r.Blocks) == 0 {
+		t.Fatalf("rules must come from the local copy: %+v", r)
+	}
+	if !s.Has("blm") || len(r.PendingDrafts) != 0 || len(s.PlanSync(s.List())) != 0 {
+		t.Fatalf("checked-out clean copy must not be pending or planned: pending=%v plan=%d", r.PendingDrafts, len(s.PlanSync(s.List())))
+	}
+	if _, err := s.Patch("blm", "rule A", "rule B"); err != nil {
+		t.Fatal(err)
+	}
+	r = s.Rules("", "test")
+	if len(r.PendingDrafts) != 1 || len(s.PlanSync(s.List())) != 1 || !strings.Contains(r.Blocks[len(r.Blocks)-1].Text, "rule B") {
+		t.Fatalf("edited copy must be pending and planned: %+v", r)
+	}
+	// cloud moves on while local is dirty → pull reports conflict, keeps local
+	_ = os.WriteFile(filepath.Join(mirror, "blm.md"), []byte("---\nname: \"blm\"\nupdatedAt: \"2026-09-02T00:00:00Z\"\n---\n\n# Auth\n\n## Login\nmemory: rule C\n"), 0o644)
+	pr := s.Pull()
+	if len(pr.Conflicts) != 1 || len(pr.Refreshed) != 0 {
+		t.Fatalf("pull: %+v", pr)
+	}
+	// after a verified push the copy stays and becomes clean
+	if err := s.Rebase("blm", "2026-09-03T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := s.Get("blm"); s.IsDirty(n) || n.Base != "2026-09-03T00:00:00Z" || len(s.PlanSync(s.List())) != 0 {
+		t.Fatalf("rebase: %+v", n)
+	}
+	// clean copy + newer cloud → pull refreshes it
+	_ = os.WriteFile(filepath.Join(mirror, "blm.md"), []byte("---\nname: \"blm\"\nupdatedAt: \"2026-09-04T00:00:00Z\"\n---\n\n# Auth\n\n## Login\nmemory: rule D\n"), 0o644)
+	pr = s.Pull()
+	n, _ := s.Get("blm")
+	if len(pr.Refreshed) != 1 || !strings.Contains(n.Content, "rule D") {
+		t.Fatalf("pull refresh: %+v %q", pr, n.Content)
+	}
 }
