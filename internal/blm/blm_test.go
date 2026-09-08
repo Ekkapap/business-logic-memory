@@ -293,8 +293,8 @@ func TestBuildFromSocraticode(t *testing.T) {
 	p := pt.FilePayload
 	files["src/lib/auth/session.ts"] = &p
 	g := buildFromSocraticode("/r", fg, files)
-	if g.Engine != "socraticode" || g.Files != 3 || len(g.Edges) != 2 || g.Calls != 1 {
-		// sql → db.ts ซ้ำกับ import edge (ไม่นับ) · md → docs/a.md เป็น call edge ใหม่ 1 เส้น
+	if g.Engine != "socraticode" || g.Files != 3 || len(g.Edges) != 2 || g.Calls != 2 {
+		// sql → db.ts ยกระดับ import edge เดิมเป็น call · md → docs/a.md เป็น call edge ใหม่ → นับ 2
 		t.Fatalf("%+v", g)
 	}
 	if g.Hubs[0].Path != "src/lib/db.ts" || g.Hubs[0].In != 1 {
