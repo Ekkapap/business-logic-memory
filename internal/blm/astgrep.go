@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -136,58 +137,88 @@ func RunAstGrep(bin, root string, files []string) map[string]*AstFacts {
 			byLang[l] = append(byLang[l], f)
 		}
 	}
+	// หนึ่ง job ต่อ (ภาษา, pattern) รันขนานด้วย ProcWorkers · แต่ละ job ได้ facts ของตัวเอง แล้ว merge ตามลำดับคงที่ (ผลเท่าเดิมทุกครั้ง)
+	type job struct {
+		lang  string
+		rule  astRule
+		files []string
+	}
+	var jobs []job
+	langs := make([]string, 0, len(byLang))
+	for l := range byLang {
+		langs = append(langs, l)
+	}
+	sort.Strings(langs)
+	for _, l := range langs {
+		for _, r := range astRules[l] {
+			jobs = append(jobs, job{l, r, byLang[l]})
+		}
+	}
+	results := make([]map[string]*AstFacts, len(jobs))
+	forEach(len(jobs), ProcWorkers(), func(i int) {
+		results[i] = runAstRule(bin, root, jobs[i].lang, jobs[i].rule, jobs[i].files)
+	})
 	facts := map[string]*AstFacts{}
-	get := func(rel string) *AstFacts {
+	for _, r := range results {
+		for rel, f := range r {
+			if facts[rel] == nil {
+				facts[rel] = &AstFacts{}
+			}
+			facts[rel].Imports = append(facts[rel].Imports, f.Imports...)
+			facts[rel].Defs = append(facts[rel].Defs, f.Defs...)
+			facts[rel].Calls = append(facts[rel].Calls, f.Calls...)
+		}
+	}
+	return facts
+}
+
+// runAstRule รัน ast-grep หนึ่ง pattern กับไฟล์กลุ่มหนึ่ง คืน facts ต่อไฟล์ (ไม่แตะ state ร่วม จึงรันขนานได้)
+func runAstRule(bin, root, lang string, rule astRule, files []string) map[string]*AstFacts {
+	facts := map[string]*AstFacts{}
+	args := append([]string{"run", "--pattern", rule.pattern, "--lang", lang, "--json=stream"}, files...)
+	cmd := exec.Command(bin, args...)
+	cmd.Dir = root
+	out, err := cmd.Output()
+	if err != nil && len(out) == 0 {
+		return facts
+	}
+	sc := bufio.NewScanner(bytes.NewReader(out))
+	sc.Buffer(make([]byte, 1<<20), 64<<20)
+	seen := map[string]bool{}
+	for sc.Scan() {
+		var m astMatch
+		if json.Unmarshal(sc.Bytes(), &m) != nil {
+			continue
+		}
+		v := m.Meta.Single[rule.meta].Text
+		if v == "" {
+			continue
+		}
+		rel := filepath.ToSlash(m.File)
+		key := rel + "|" + rule.kind + "|" + v
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
 		if facts[rel] == nil {
 			facts[rel] = &AstFacts{}
 		}
-		return facts[rel]
-	}
-	for lang, group := range byLang {
-		for _, rule := range astRules[lang] {
-			args := append([]string{"run", "--pattern", rule.pattern, "--lang", lang, "--json=stream"}, group...)
-			cmd := exec.Command(bin, args...)
-			cmd.Dir = root
-			out, err := cmd.Output()
-			if err != nil && len(out) == 0 {
+		f := facts[rel]
+		switch rule.kind {
+		case "import":
+			f.Imports = append(f.Imports, v)
+		case "def":
+			f.Defs = append(f.Defs, v)
+		case "call":
+			// `store.NewToken` / `auth.login` → ชื่อท้ายสุด เพื่อจับคู่กับ definition (owner คือไฟล์ที่นิยามชื่อนั้น)
+			if i := strings.LastIndex(v, "."); i >= 0 {
+				v = v[i+1:]
+			}
+			// ชื่อสั้น/สามัญ (log, ok, fail, run, main …) ทำให้ไฟล์ helper กลายเป็น hub ปลอม — ข้าม (เห็นบน NPM-PORTAL 2026-09-09)
+			if len(v) < 5 || genericCall[strings.ToLower(v)] {
 				continue
 			}
-			sc := bufio.NewScanner(bytes.NewReader(out))
-			sc.Buffer(make([]byte, 1<<20), 64<<20)
-			seen := map[string]bool{}
-			for sc.Scan() {
-				var m astMatch
-				if json.Unmarshal(sc.Bytes(), &m) != nil {
-					continue
-				}
-				v := m.Meta.Single[rule.meta].Text
-				if v == "" {
-					continue
-				}
-				rel := filepath.ToSlash(m.File)
-				key := rel + "|" + rule.kind + "|" + v
-				if seen[key] {
-					continue
-				}
-				seen[key] = true
-				f := get(rel)
-				switch rule.kind {
-				case "import":
-					f.Imports = append(f.Imports, v)
-				case "def":
-					f.Defs = append(f.Defs, v)
-				case "call":
-					// `store.NewToken` / `auth.login` → ชื่อท้ายสุด เพื่อจับคู่กับ definition (owner คือไฟล์ที่นิยามชื่อนั้น)
-					if i := strings.LastIndex(v, "."); i >= 0 {
-						v = v[i+1:]
-					}
-					// ชื่อสั้น/สามัญ (log, ok, fail, run, main …) ทำให้ไฟล์ helper กลายเป็น hub ปลอม — ข้าม (เห็นบน NPM-PORTAL 2026-09-09)
-					if len(v) < 5 || genericCall[strings.ToLower(v)] {
-						continue
-					}
-					f.Calls = append(f.Calls, v)
-				}
-			}
+			f.Calls = append(f.Calls, v)
 		}
 	}
 	return facts

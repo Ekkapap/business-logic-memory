@@ -68,8 +68,21 @@ var (
 	reMDHead   = regexp.MustCompile(`(?m)^#{1,2}\s+(.+?)\s*$`)
 )
 
-// BuildGraph สร้างกราฟจากไฟล์ที่ ScanRepo เห็น (ignore เดียวกัน) แล้วเขียน graph.json ลง store
+// BuildGraph ลำดับแหล่งข้อมูล: SocratiCode ใน Qdrant (resolve แล้ว ครบทุกภาษา) → ast-grep → regex · เขียน graph.json ลง store
+// sub (วิเคราะห์เฉพาะโฟลเดอร์) ใช้กับ ast-grep/regex เท่านั้น เพราะกราฟ SocratiCode เป็นของทั้งโปรเจ็ค
 func (s *Store) BuildGraph(sub string) (Graph, error) {
+	if sub == "" {
+		if g, err := FetchSocraticodeGraph(s.Root); err == nil && len(g.Edges) > 0 {
+			_ = os.MkdirAll(s.Dir, 0o755)
+			raw, _ := json.Marshal(g)
+			return g, os.WriteFile(filepath.Join(s.Dir, "graph.json"), raw, 0o644)
+		}
+	}
+	return s.buildLocal(sub)
+}
+
+// buildLocal สแกนเอง (ast-grep หรือ regex) จากไฟล์ที่ ScanRepo เห็น (ignore เดียวกัน)
+func (s *Store) buildLocal(sub string) (Graph, error) {
 	root := s.Root
 	ig, _ := loadIgnores(root)
 	aliases := tsAliases(root)
@@ -122,13 +135,22 @@ func (s *Store) BuildGraph(sub string) (Graph, error) {
 	if astBin != "" {
 		facts = RunAstGrep(astBin, root, files)
 	}
-	for _, rel := range files {
+	// เฟส 1 (ขนาน ทุกคอร์): อ่าน+parse แต่ละไฟล์ → symbols/targets ของตัวเอง · nodes ถูกอ่านอย่างเดียวในเฟสนี้ (resolve* ค้นหา key)
+	// เฟส 2 (ตามลำดับ): merge เข้า nodes/edgeSet · แยกสองเฟสเพื่อให้ผลคงที่และไม่ต้องล็อก map
+	type parsed struct {
+		symbols []string
+		targets []string
+		kind    string
+	}
+	results := make([]parsed, len(files))
+	forEach(len(files), Workers(), func(i int) {
+		rel := files[i]
 		raw, err := os.ReadFile(filepath.Join(root, rel))
 		if err != nil {
-			continue
+			return
 		}
 		src := string(raw)
-		n := nodes[rel]
+		n := &GraphNode{Path: rel, Lang: nodes[rel].Lang}
 		var targets []string
 		kind := "import"
 		if f := facts[rel]; f != nil && n.Lang != "md" {
@@ -195,13 +217,18 @@ func (s *Store) BuildGraph(sub string) (Graph, error) {
 				}
 			}
 		}
-		for _, t := range targets {
+		results[i] = parsed{n.Symbols, targets, kind}
+	})
+	for i, rel := range files {
+		n := nodes[rel]
+		n.Symbols = results[i].symbols
+		for _, t := range results[i].targets {
 			if t == rel {
 				continue
 			}
 			k := rel + "->" + t
 			if _, ok := edgeSet[k]; !ok {
-				edgeSet[k] = GraphEdge{From: rel, To: t, Kind: kind}
+				edgeSet[k] = GraphEdge{From: rel, To: t, Kind: results[i].kind}
 				n.Out++
 				nodes[t].In++
 			}
@@ -561,6 +588,9 @@ func resolveMD(from, target string, nodes map[string]*GraphNode) string {
 }
 
 func engineLabel(g Graph) string {
+	if g.Engine == "socraticode" {
+		return Green("socraticode (Qdrant)") + "  resolved imports + definitions + cross-file calls from the SocratiCode index"
+	}
 	if g.Engine == "ast-grep" {
 		return Green("ast-grep (tree-sitter)") + "  imports + definitions + cross-file calls"
 	}

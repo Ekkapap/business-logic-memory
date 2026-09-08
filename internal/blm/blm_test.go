@@ -1,6 +1,7 @@
 package blm
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -281,4 +282,44 @@ func TestGraphBuildAndQuery(t *testing.T) {
 	if out := RenderGraph(g); !strings.Contains(out, "Hubs") || !strings.Contains(out, "src/lib") {
 		t.Fatal(out)
 	}
+}
+
+func TestBuildFromSocraticode(t *testing.T) {
+	var fg scFileGraph
+	_ = json.Unmarshal([]byte(`{"nodes":[{"relativePath":"src/lib/db.ts","language":"typescript","imports":[]},{"relativePath":"src/lib/auth/session.ts","language":"typescript","imports":["@/lib/db"]},{"relativePath":"docs/a.md","language":"markdown","imports":[]}],"edges":[{"source":"src/lib/auth/session.ts","target":"src/lib/db.ts","type":"import"}]}`), &fg)
+	files := map[string]*scFilePayload{}
+	var p scFilePayload
+	_ = json.Unmarshal([]byte(`{"file":"src/lib/auth/session.ts","language":"typescript","symbols":[{"name":"createSession","kind":"function","line":10},{"name":"x","kind":"variable","line":1}],"outgoingCalls":[{"calleeName":"sql","calleeCandidates":["src/lib/db.ts::sql#3"]},{"calleeName":"log","calleeCandidates":[]},{"calleeName":"dup","calleeCandidates":["a.ts::dup#1","b.ts::dup#2"]}]}`), &p)
+	files["src/lib/auth/session.ts"] = &p
+	g := buildFromSocraticode("/r", fg, files)
+	if g.Engine != "socraticode" || g.Files != 3 || len(g.Edges) != 1 || g.Calls != 0 {
+		// import และ call ไปไฟล์เดียวกัน → รวมเป็น edge เดียว (kind import ชนะเพราะมาก่อน) calls ไม่นับซ้ำ
+		t.Fatalf("%+v", g)
+	}
+	if g.Hubs[0].Path != "src/lib/db.ts" || g.Hubs[0].In != 1 {
+		t.Fatalf("hubs %+v", g.Hubs)
+	}
+	var sess GraphNode
+	for _, n := range g.Nodes {
+		if n.Path == "src/lib/auth/session.ts" {
+			sess = n
+		}
+	}
+	if len(sess.Symbols) != 1 || sess.Symbols[0] != "createSession" {
+		t.Fatalf("symbols %+v (variables must be dropped)", sess.Symbols)
+	}
+	if SocratiCodeProjectID("/Users/neo/Programming/MyGit/NPM-PORTAL") != "a1b7c40b404d" {
+		t.Fatalf("project id mismatch: %s", SocratiCodeProjectID("/Users/neo/Programming/MyGit/NPM-PORTAL"))
+	}
+}
+
+func TestForEachCoversAll(t *testing.T) {
+	out := make([]int, 1000)
+	forEach(len(out), 8, func(i int) { out[i] = i + 1 })
+	for i, v := range out {
+		if v != i+1 {
+			t.Fatalf("slot %d = %d", i, v)
+		}
+	}
+	forEach(0, 4, func(int) { t.Fatal("must not run") })
 }

@@ -49,7 +49,7 @@ Then in Claude Code: `/reload-plugins` → `/blm_init` (guided analysis: main to
 | `blm edit <target> <find> <replace>` | `blm_edit` | — |
 | `blm diff <name>` · `blm merge <name> mine\|cloud\|content` | `blm_diff` · `blm_merge` | — |
 | `blm conflicts` · `blm resolve <name>` | `blm_conflict` · `blm_conflicts` · `blm_resolve` | — |
-| `blm scan [path]` · `blm graph [query] [--rebuild]` | `blm_scan` · `blm_graph` | — |
+| `blm scan [path]` · `blm graph [query] [--rebuild]` | `blm_scan` · `blm_graph` | graph source: SocratiCode graph in Qdrant → ast-grep → regex · local work runs on all cores (`BLM_WORKERS` overrides) |
 | `blm get/save/update/patch/delete` | `blm_get/save/update/patch/delete` | — |
 | — | `blm` (read rules) | `/blm ["topic"]` |
 | — | `blm_stat` | — |

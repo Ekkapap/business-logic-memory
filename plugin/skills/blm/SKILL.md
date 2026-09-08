@@ -27,7 +27,7 @@ description: How to record project knowledge during a session without blocking o
 
 ## สำรวจโปรเจ็คโดยไม่พึ่งเครื่องมือนอก
 
-- `blm_scan` ขนาด/token/โปรเจ็คย่อย · `blm_graph` กราฟ import + symbol ในตัว (hubs, clusters ต่อโฟลเดอร์, `query` หาว่าเรื่องนี้อยู่ไฟล์ไหน ใครเรียก) ใช้เมื่อไม่มี SocratiCode/graphify หรือใช้เสริมกัน ผลถูก cache ใน store/graph.json (`rebuild:true` เมื่อโค้ดเปลี่ยนมาก)
+- `blm_scan` ขนาด/token/โปรเจ็คย่อย · `blm_graph` กราฟ import + symbol + call (hubs, clusters ต่อโฟลเดอร์, `query` หาว่าเรื่องนี้อยู่ไฟล์ไหน ใครเรียก) แหล่งข้อมูลตามลำดับ: กราฟ SocratiCode ใน Qdrant (ถ้า index ไว้) → ast-grep → regex ดูที่ป้าย engine · งาน local รันขนานตามจำนวนคอร์ ผลถูก cache ใน store/graph.json (`rebuild:true` เมื่อโค้ดเปลี่ยนมาก)
 
 ## สถิติ (ดูใน `blm_status` / `blm status`)
 
@@ -59,7 +59,7 @@ description: How to record project knowledge during a session without blocking o
 
 ## สำรวจโปรเจ็คโดยไม่พึ่งเครื่องมือนอก
 
-- `blm_scan` ขนาด/token/โปรเจ็คย่อย · `blm_graph` กราฟ import + symbol ในตัว (hubs, clusters ต่อโฟลเดอร์, `query` หาว่าเรื่องนี้อยู่ไฟล์ไหน ใครเรียก) ใช้เมื่อไม่มี SocratiCode/graphify หรือใช้เสริมกัน ผลถูก cache ใน store/graph.json (`rebuild:true` เมื่อโค้ดเปลี่ยนมาก)
+- `blm_scan` ขนาด/token/โปรเจ็คย่อย · `blm_graph` กราฟ import + symbol + call (hubs, clusters ต่อโฟลเดอร์, `query` หาว่าเรื่องนี้อยู่ไฟล์ไหน ใครเรียก) แหล่งข้อมูลตามลำดับ: กราฟ SocratiCode ใน Qdrant (ถ้า index ไว้) → ast-grep → regex ดูที่ป้าย engine · งาน local รันขนานตามจำนวนคอร์ ผลถูก cache ใน store/graph.json (`rebuild:true` เมื่อโค้ดเปลี่ยนมาก)
 
 ## สถิติ (ดูใน `blm_status` / `blm status`)
 

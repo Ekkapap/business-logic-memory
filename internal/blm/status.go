@@ -389,6 +389,7 @@ func RenderStatus(st Status) string {
 		}
 	}
 	rows = append(rows, [2]string{"Backend", be})
+	rows = append(rows, [2]string{"Workers", fmt.Sprintf("%d threads on %d cores (local scans run in parallel · BLM_WORKERS overrides)", Workers(), runtime.NumCPU())})
 	b.WriteString(KV(rows) + "\n")
 
 	b.WriteString(Section("Rules") + "\n")
