@@ -33,7 +33,17 @@ func TestHelperProcess(t *testing.T) {
 	os.Exit(0)
 }
 
+var (
+	fakeMu       sync.Mutex
+	fakeSaved    = map[string]string{"old-note": "2026-01-01T00:00:00Z"}
+	fakeInflight int
+)
+
 func handleFake(line []byte, enc *json.Encoder, mu *sync.Mutex) {
+	fakeMu.Lock()
+	fakeInflight++
+	fakeMu.Unlock()
+	defer func() { fakeMu.Lock(); fakeInflight--; fakeMu.Unlock() }()
 	{
 		var m struct {
 			ID     *int   `json:"id"`
@@ -52,15 +62,39 @@ func handleFake(line []byte, enc *json.Encoder, mu *sync.Mutex) {
 			_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "id": *m.ID, "result": map[string]any{"serverInfo": map[string]any{"name": "fake"}}})
 			mu.Unlock()
 		case "tools/call":
+			if m.Params.Name == "memory_list" {
+				fakeMu.Lock()
+				var notes []map[string]string
+				for n, at := range fakeSaved {
+					notes = append(notes, map[string]string{"name": n, "folder": "features", "updatedAt": at})
+				}
+				fakeMu.Unlock()
+				body, _ := json.Marshal(map[string]any{"notes": notes})
+				mu.Lock()
+				_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "id": *m.ID, "result": map[string]any{"content": []map[string]any{{"type": "text", "text": string(body)}}}})
+				mu.Unlock()
+				return
+			}
 			time.Sleep(200 * time.Millisecond)
-			text := "saved " + fmt.Sprint(m.Params.Args["name"])
+			name := fmt.Sprint(m.Params.Args["name"])
+			text := "saved " + name
 			isErr := false
-			if m.Params.Args["name"] == "boom" {
+			if name == "boom" {
 				text, isErr = "note boom rejected", true
 			}
 			if os.Getenv("AR_PROJECT_ID") == "" {
 				text, isErr = "missing AR_PROJECT_ID env", true
 			}
+			// จำลอง AgentsRoom จริง: ตอบ ok แต่รับจริงเฉพาะเมื่อไม่มี call อื่นค้าง (ขนาน = เข้าตัวเดียว) · ลบ = เอาออก
+			fakeMu.Lock()
+			if !isErr {
+				if m.Params.Name == "memory_delete" {
+					delete(fakeSaved, name)
+				} else if fakeInflight <= 1 || name == "a" {
+					fakeSaved[name] = time.Now().UTC().Add(time.Second).Format(time.RFC3339)
+				}
+			}
+			fakeMu.Unlock()
 			mu.Lock()
 			_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "id": *m.ID, "result": map[string]any{"content": []map[string]any{{"type": "text", "text": text}}, "isError": isErr}})
 			mu.Unlock()
@@ -82,20 +116,20 @@ func TestPushAllParallel(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Close()
-	t0 := time.Now()
 	pushed, deleted := s.PushAll(c, s.PlanSync(s.List()), "tester", "qa", []string{"old-note"})
-	if d := time.Since(t0); d > 700*time.Millisecond {
-		t.Fatalf("5 saves + 1 delete took %s — not parallel", d)
-	}
-	ok := 0
+	ok, retried := 0, 0
 	for _, r := range pushed {
-		if r.OK {
+		if r.Verified {
 			ok++
 		} else if r.Name != "boom" || !strings.Contains(r.Error, "rejected") {
 			t.Fatalf("unexpected failure %+v", r)
 		}
+		if r.Retried {
+			retried++
+		}
 	}
-	if ok != 4 || len(deleted) != 1 || !deleted[0].OK {
+	// รอบขนานเข้าจริงแค่ตัวเดียว → ที่เหลือต้องถูกยิงซ้ำทีละตัวจนยืนยันได้ครบ
+	if ok != 4 || retried < 3 || len(deleted) != 1 || !deleted[0].Verified {
 		t.Fatalf("pushed %+v deleted %+v", pushed, deleted)
 	}
 	if left := s.List(); len(left) != 1 || left[0].Name != "boom" {

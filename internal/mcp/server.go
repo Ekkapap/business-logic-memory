@@ -87,6 +87,7 @@ func tools(c blm.Config) []tool {
 				"done":      strArr("manual mode only: temp notes already pushed successfully → archive them"),
 				"names":     strArr("restrict the plan to these notes (omit = all)"),
 				"full":      map[string]any{"type": "boolean", "description": "manual mode only: include note bodies in the plan (default false — bodies stay out of your context)"},
+				"restore":   strArr("move these notes back from .synced/ into the store (recover items archived by an earlier push that did not really land)"),
 			})},
 	}
 	if !c.HasSync() {
@@ -141,15 +142,16 @@ func (s *Server) Call(name string, a map[string]any) (any, error) {
 		return s.store.Rules(getStr(a, "query"), trigger), nil
 	case "blm_get":
 		return s.store.Get(in.Name)
+	// เขียน/แก้: คืนแค่ metadata + ขนาด ไม่คืนเนื้อโน้ต (2026-09-09: blm_patch คืนทั้งก้อน 7 ครั้ง = 170 KB เข้า context โดยไม่จำเป็น)
 	case "blm_save":
 		n, err := s.store.Save(in)
-		return map[string]any{"ok": err == nil, "note": n}, err
+		return brief(n, err), err
 	case "blm_update":
 		n, err := s.store.Update(in)
-		return map[string]any{"ok": err == nil, "note": n}, err
+		return brief(n, err), err
 	case "blm_patch":
 		n, err := s.store.Patch(in.Name, getStr(a, "find"), getStr(a, "replace"))
-		return map[string]any{"ok": err == nil, "note": n}, err
+		return brief(n, err), err
 	case "blm_delete":
 		return map[string]any{"ok": true}, s.store.Delete(in.Name)
 	case "blm_edit":
@@ -218,6 +220,17 @@ func (s *Server) Call(name string, a map[string]any) (any, error) {
 		}
 		apply, _ := a["apply"].(bool)
 		full, _ := a["full"].(bool)
+		if restore := getArr(a, "restore"); len(restore) > 0 {
+			var back []string
+			for _, n := range restore {
+				note, err := s.store.Unarchive(n)
+				if err != nil {
+					return nil, err
+				}
+				back = append(back, note)
+			}
+			return map[string]any{"ok": true, "restored": back}, nil
+		}
 		return s.sync(getStr(a, "direction"), getArr(a, "done"), getArr(a, "names"), apply, getStr(a, "author"), getStr(a, "role"), getArr(a, "delete"), full)
 	}
 	return nil, fmt.Errorf("unknown tool %s", name)
@@ -292,7 +305,12 @@ func (s *Server) sync(direction string, done, names []string, apply bool, author
 		pushed, deleted := s.store.PushAll(c, plan, author, role, deletes)
 		failed := 0
 		for _, r := range pushed {
-			if !r.OK {
+			if !r.Verified {
+				failed++
+			}
+		}
+		for _, r := range deleted {
+			if !r.Verified {
 				failed++
 			}
 		}
@@ -338,6 +356,10 @@ func (s *Server) sync(direction string, done, names []string, apply bool, author
 		return map[string]any{"plan": briefs, "parallel": true, "next": "preview only — run blm_sync {apply:true, author, role} to push; pass full:true only if you must push by hand"}, nil
 	}
 	return map[string]any{"plan": plan, "parallel": true, "next": next}, nil
+}
+
+func brief(n blm.Note, err error) map[string]any {
+	return map[string]any{"ok": err == nil, "name": n.Name, "target": n.Target, "mode": n.Mode, "folder": n.Folder, "bytes": len(n.Content), "updatedAt": n.UpdatedAt}
 }
 
 func (s *Server) agentsRoom() (*blm.Client, error) {

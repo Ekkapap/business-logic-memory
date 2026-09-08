@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -181,59 +182,188 @@ type PushResult struct {
 	Ms       int64    `json:"ms"`
 	Error    string   `json:"error,omitempty"`
 	Archived []string `json:"archived,omitempty"`
+	// Response ข้อความที่ server ตอบ (ตัดสั้น) — 2026-09-09 พบว่า server ตอบ "ok" ทั้งที่ไม่ได้เขียน (ยิงขนาน 6 ตัว เข้าจริง 1)
+	Response string `json:"response,omitempty"`
+	// Verified = memory_list หลัง push ยืนยันว่า updatedAt ใหม่กว่าตอนเริ่ม (หรือโน้ตหายไปแล้วสำหรับ delete)
+	Verified bool `json:"verified"`
+	Retried  bool `json:"retried,omitempty"`
 }
 
-// PushAll ยิง memory_save ทุกรายการพร้อมกัน (ทุกรายการคนละโน้ตอยู่แล้ว) แล้ว archive ตัวที่สำเร็จ
-// deletes = ชื่อโน้ตปลายทางที่จะลบ (เช่นโน้ตชื่อเก่าหลัง rename)
+// ListedNote รายการจาก memory_list ที่ใช้ตรวจสอบ
+type ListedNote struct {
+	Name      string `json:"name"`
+	Folder    string `json:"folder"`
+	UpdatedAt string `json:"updatedAt"`
+}
+
+// ListNotes เรียก memory_list แล้วคืน map ชื่อ → โน้ต (ใช้ยืนยันผล push — เชื่อ server ตอบ ok อย่างเดียวไม่ได้)
+func (c *Client) ListNotes() (map[string]ListedNote, error) {
+	text, err := c.CallTool("memory_list", map[string]any{})
+	if err != nil {
+		return nil, err
+	}
+	var d struct {
+		Notes []ListedNote `json:"notes"`
+	}
+	if err := json.Unmarshal([]byte(text), &d); err != nil {
+		return nil, fmt.Errorf("memory_list returned non-JSON: %.120s", text)
+	}
+	out := map[string]ListedNote{}
+	for _, n := range d.Notes {
+		out[n.Name] = n
+	}
+	return out, nil
+}
+
+func saveArgs(item SyncItem, author, role string) map[string]any {
+	args := map[string]any{"name": item.MemorySave.Name, "mode": item.MemorySave.Mode, "content": item.MemorySave.Content, "author": author, "role": role, "scope": "project"}
+	if item.MemorySave.Folder != "" {
+		args["folder"] = item.MemorySave.Folder
+	}
+	if item.MemorySave.Description != "" {
+		args["description"] = item.MemorySave.Description
+	}
+	if len(item.MemorySave.Tags) > 0 {
+		args["tags"] = item.MemorySave.Tags
+	}
+	return args
+}
+
+func short(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) > 300 {
+		return s[:300] + "…"
+	}
+	return s
+}
+
+// PushAll ยิง memory_save ทุกรายการพร้อมกัน แล้ว**ตรวจด้วย memory_list** ว่าเข้าจริง (updatedAt ใหม่กว่าตอนเริ่ม)
+// ตัวที่ไม่ผ่านยิงซ้ำทีละตัว (2026-09-09: AgentsRoom ตอบ ok ให้ทุกตัวแต่รับจริงตัวเดียวเมื่อยิงขนาน) แล้ว archive เฉพาะที่ยืนยันแล้ว
+// deletes = ชื่อโน้ตปลายทางที่จะลบ (เช่นโน้ตชื่อเก่าหลัง rename) ยืนยันด้วยการหายจาก memory_list
 func (s *Store) PushAll(c *Client, plan []SyncItem, author, role string, deletes []string) ([]PushResult, []PushResult) {
+	start := time.Now().UTC().Add(-2 * time.Second).Format(time.RFC3339)
 	results := make([]PushResult, len(plan))
+	deleted := make([]PushResult, len(deletes))
+	save := func(i int, item SyncItem) {
+		t := time.Now()
+		text, err := c.CallTool("memory_save", saveArgs(item, author, role))
+		r := &results[i]
+		r.Name, r.Mode, r.From = item.MemorySave.Name, item.MemorySave.Mode, item.From
+		r.Ms += time.Since(t).Milliseconds()
+		r.Response = short(text)
+		r.OK, r.Error = err == nil, ""
+		if err != nil {
+			r.Error = err.Error()
+		}
+	}
+	del := func(i int, name string) {
+		t := time.Now()
+		text, err := c.CallTool("memory_delete", map[string]any{"name": name})
+		r := &deleted[i]
+		r.Name, r.Mode = name, "delete"
+		r.Ms += time.Since(t).Milliseconds()
+		r.Response = short(text)
+		r.OK, r.Error = err == nil, ""
+		if err != nil {
+			r.Error = err.Error()
+		}
+	}
 	var wg sync.WaitGroup
 	for i, item := range plan {
 		wg.Add(1)
-		go func(i int, item SyncItem) {
-			defer wg.Done()
-			t := time.Now()
-			// scope project เสมอ: กฎธุรกิจเป็นของโปรเจ็คนี้ ไม่ใช่ทั้งบัญชี (เจ้าของย้ำ 2026-09-09) · folder "global/…" = ทั้งโปรเจ็ค ไม่ใช่ทุกโปรเจ็ค
-			args := map[string]any{"name": item.MemorySave.Name, "mode": item.MemorySave.Mode, "content": item.MemorySave.Content, "author": author, "role": role, "scope": "project"}
-			if item.MemorySave.Folder != "" {
-				args["folder"] = item.MemorySave.Folder
-			}
-			if item.MemorySave.Description != "" {
-				args["description"] = item.MemorySave.Description
-			}
-			if len(item.MemorySave.Tags) > 0 {
-				args["tags"] = item.MemorySave.Tags
-			}
-			r := PushResult{Name: item.MemorySave.Name, Mode: item.MemorySave.Mode, From: item.From}
-			_, err := c.CallTool("memory_save", args)
-			r.Ms = time.Since(t).Milliseconds()
-			if err != nil {
-				r.Error = err.Error()
-			} else {
-				r.OK = true
-				for _, n := range item.From {
-					if p, err := s.Archive(n); err == nil {
-						r.Archived = append(r.Archived, p)
-					}
-				}
-			}
-			results[i] = r
-		}(i, item)
+		go func(i int, item SyncItem) { defer wg.Done(); save(i, item) }(i, item)
 	}
-	deleted := make([]PushResult, len(deletes))
 	for i, name := range deletes {
 		wg.Add(1)
-		go func(i int, name string) {
-			defer wg.Done()
-			t := time.Now()
-			_, err := c.CallTool("memory_delete", map[string]any{"name": name})
-			r := PushResult{Name: name, Mode: "delete", Ms: time.Since(t).Milliseconds(), OK: err == nil}
-			if err != nil {
-				r.Error = err.Error()
-			}
-			deleted[i] = r
-		}(i, name)
+		go func(i int, name string) { defer wg.Done(); del(i, name) }(i, name)
 	}
 	wg.Wait()
+
+	verify := func() {
+		listed, err := c.ListNotes()
+		if err != nil {
+			for i := range results {
+				results[i].Verified = false
+				if results[i].Error == "" {
+					results[i].Error = "verify failed: " + err.Error()
+				}
+			}
+			return
+		}
+		for i := range results {
+			n, ok := listed[results[i].Name]
+			results[i].Verified = ok && n.UpdatedAt >= start
+			if !results[i].Verified {
+				results[i].OK = false
+				if results[i].Error == "" {
+					results[i].Error = "server answered but memory_list shows no change (updatedAt " + n.UpdatedAt + ")"
+				}
+			}
+		}
+		for i := range deleted {
+			_, still := listed[deleted[i].Name]
+			deleted[i].Verified = !still
+			if still {
+				deleted[i].OK = false
+				if deleted[i].Error == "" {
+					deleted[i].Error = "server answered but the note is still listed"
+				}
+			}
+		}
+	}
+	verify()
+	// รอบสอง: ทีละตัว เฉพาะที่ไม่ผ่าน
+	retried := false
+	for i, item := range plan {
+		if !results[i].Verified {
+			results[i].Retried, retried = true, true
+			save(i, item)
+		}
+	}
+	for i, name := range deletes {
+		if !deleted[i].Verified {
+			deleted[i].Retried, retried = true, true
+			del(i, name)
+		}
+	}
+	if retried {
+		verify()
+	}
+	for i := range results {
+		if !results[i].Verified {
+			continue
+		}
+		for _, n := range results[i].From {
+			if p, err := s.Archive(n); err == nil {
+				results[i].Archived = append(results[i].Archived, p)
+			}
+		}
+	}
 	return results, deleted
+}
+
+// Unarchive ย้ายไฟล์จาก .synced/ กลับเข้า store (ใช้กู้รายการที่ถูก archive ทั้งที่ยังไม่เข้า backend)
+// name = ชื่อไฟล์ใน .synced (มี stamp) หรือชื่อโน้ต (เลือกไฟล์ล่าสุดที่ลงท้ายด้วย -<name>.md)
+func (s *Store) Unarchive(name string) (string, error) {
+	dir := filepath.Join(s.Dir, ".synced")
+	entries, _ := os.ReadDir(dir)
+	var pick string
+	for _, e := range entries {
+		if e.Name() == name || strings.HasSuffix(e.Name(), "-"+name+".md") {
+			if e.Name() > pick {
+				pick = e.Name()
+			}
+		}
+	}
+	if pick == "" {
+		return "", fmt.Errorf("no archived note %q in .synced", name)
+	}
+	note := pick
+	if i := strings.LastIndex(pick, "Z-"); i >= 0 {
+		note = pick[i+2:]
+	}
+	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
+		return "", err
+	}
+	return note, os.Rename(filepath.Join(dir, pick), filepath.Join(s.Dir, note))
 }
