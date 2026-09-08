@@ -8,6 +8,7 @@ argument-hint: [path ย่อยที่จะวิเคราะห์ — 
 0. เรียก `blm_status` ดู backend/store และว่ามี `blm.md` อยู่แล้วไหม (มีแล้ว = โหมดปรับปรุง เริ่มจากอ่านด้วย `blm` ก่อน)
 1. **สำรวจ** เฉพาะ "$ARGUMENTS" (ว่าง = ทั้ง root) โดยข้าม path ตาม `.gitignore` + `.socraticodeignore` + `.ignorememory` (รวมกันทั้งสามไฟล์) และโฟลเดอร์จุด
    - ใช้เครื่องมือที่มีตามลำดับ: SocratiCode (`codebase_about` / `codebase_search`) > Obsidian vault (โน้ตในโปรเจ็ค) > graphify (`graphify-out/graph.json`) > Glob/Grep ธรรมดา — `blm_tools status` บอกว่ามีอะไร
+   - SocratiCode: ค้น**ภาษาอังกฤษก่อน** (โค้ดและ memory note เขียนอังกฤษ ผลตรงกว่ามาก ทดสอบ 2026-09-09: "authentication login" ได้ทั้งไฟล์ตรรกะหลักและ memory note 3 ใบ ส่วนคำไทยได้แต่ข้อความ UI) ใช้ภาษาไทยเสริมเฉพาะเมื่อตามหาข้อความหน้าจอ/คอมเมนต์ไทย และใส่ `fileFilter`/`languageFilter` กันโมดูลข้างเคียงปน (เช่น wireguard/) · ผลที่เป็น `.agentsroom/memory/**` คือจุดเริ่มอ่านที่ดีที่สุด
    - ประเมินขนาดก่อนอ่าน: จำนวนไฟล์และ byte รวม ถ้าเกินราว 200k token ให้เตือนเจ้าของและเสนอแบ่ง path หรือติดตั้งเครื่องมือ (`blm tools install socraticode` ต้องมี Docker · `graphify`) ก่อนลุย
 2. **เสนอหัวข้อหลัก** (Main Business) 5–12 ข้อ พร้อมเหตุผลบรรทัดเดียวต่อข้อ → รอเจ้าของแก้/ยืนยัน
 3. **เสนอความหมาย** ของแต่ละหัวข้อหลัก 1–2 ประโยค → รอยืนยัน
