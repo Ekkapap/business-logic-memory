@@ -40,7 +40,7 @@ func TestConflictWorkflow(t *testing.T) {
 	if slug("2026-09-09 — blm_graph reads SocratiCode's graph") != "2026-09-09-blm-graph" {
 		t.Fatalf("slug must cut at a word boundary: %q", slug("2026-09-09 — blm_graph reads SocratiCode's graph"))
 	}
-	if !strings.Contains(string(raw), "<<<<<<< Current") || !strings.Contains(string(raw), "\n=======\n") || !strings.Contains(string(raw), ">>>>>>> Incoming") || len(filepath.Base(reports[0].File)) > 48 {
+	if !strings.Contains(string(raw), "<<<<<<< Current") || !strings.Contains(string(raw), "\n=======\n") || !strings.Contains(string(raw), "\\>\\>\\>\\>\\>\\>\\> Incoming") || len(filepath.Base(reports[0].File)) > 48 {
 		t.Fatalf("report must lead with the A/B difference and have a short name: %s\n%s", reports[0].File, raw)
 	}
 	// ยื่นซ้ำสำหรับร่างเดิม → แทนรายงานเก่า id เดิม ไม่งอกเป็น #2

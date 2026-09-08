@@ -112,7 +112,7 @@ func blockSection(body, which string) string {
 		}
 		rest = rest[nl+1:]
 		mid := strings.Index(rest, "\n=======\n")
-		endIdx := strings.Index(rest, "\n>>>>>>> Incoming")
+		endIdx := strings.Index(rest, "\n\\>\\>\\>\\>\\>\\>\\> Incoming") // escape ไว้ ไม่งั้น markdown ทำเป็น blockquote 7 ชั้น (เห็น 2026-09-09)
 		if mid < 0 || endIdx < 0 || endIdx < mid {
 			return ""
 		}
@@ -261,8 +261,8 @@ cloudUpdatedAt: %s
 
 # ความขัดแย้ง #%d — %s › %s
 
-**โน้ตที่ชน:** %s (AgentsRoom: %s › %s) ตรงหัวข้อ "%s"
-**เรื่องใน blm.md:** %s › %s
+- **โน้ตที่ชน:** %s (AgentsRoom: %s › %s) ตรงหัวข้อ "%s"
+- **เรื่องใน blm.md:** %s › %s
 
 **ทำไม agent ตัดสินเองไม่ได้:** %s
 
@@ -276,7 +276,7 @@ cloudUpdatedAt: %s
 
 %s
 
->>>>>>> Incoming — cloud (A, AgentsRoom แก้ล่าสุด %s)
+\>\>\>\>\>\>\> Incoming — cloud (A, AgentsRoom แก้ล่าสุด %s)
 
 ## ตัดสิน
 
