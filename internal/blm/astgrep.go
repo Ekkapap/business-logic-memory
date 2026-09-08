@@ -71,8 +71,11 @@ type astRule struct {
 // astRules pattern ต่อภาษา (ภาษาที่ tree-sitter รองรับผ่าน ast-grep) — $NAME / $SRC / $FN คือ metavariable
 var astRules = map[string][]astRule{
 	"ts": {
-		{"import", "import $$$A from '$SRC'", "SRC"}, {"import", "import '$SRC'", "SRC"}, {"import", "export $$$A from '$SRC'", "SRC"},
-		{"import", "require('$SRC')", "SRC"}, {"import", "import('$SRC')", "SRC"},
+		{"import", "import $$$A from '$SRC'", "SRC"}, {"import", "import $$$A from \"$SRC\"", "SRC"},
+		{"import", "import type $$$A from '$SRC'", "SRC"}, {"import", "import type $$$A from \"$SRC\"", "SRC"},
+		{"import", "import '$SRC'", "SRC"}, {"import", "import \"$SRC\"", "SRC"},
+		{"import", "export $$$A from '$SRC'", "SRC"}, {"import", "export $$$A from \"$SRC\"", "SRC"},
+		{"import", "require('$SRC')", "SRC"}, {"import", "require(\"$SRC\")", "SRC"}, {"import", "import('$SRC')", "SRC"}, {"import", "import(\"$SRC\")", "SRC"},
 		{"def", "function $NAME($$$) { $$$ }", "NAME"}, {"def", "async function $NAME($$$) { $$$ }", "NAME"},
 		{"def", "class $NAME { $$$ }", "NAME"}, {"def", "class $NAME extends $$$B { $$$ }", "NAME"},
 		{"def", "export const $NAME = $$$", "NAME"}, {"def", "export function $NAME($$$) { $$$ }", "NAME"},
@@ -100,6 +103,9 @@ func init() {
 	astRules["tsx"], astRules["js"], astRules["jsx"] = astRules["ts"], astRules["ts"], astRules["ts"]
 	astRules["kt"], astRules["cs"] = astRules["java"], astRules["java"]
 }
+
+// genericCall ชื่อฟังก์ชันสามัญที่นิยามซ้ำได้ทุกที่ ไม่บอกความสัมพันธ์จริง
+var genericCall = map[string]bool{"error": true, "render": true, "handler": true, "handle": true, "tostring": true, "string": true, "print": true, "println": true, "printf": true, "sprintf": true, "errorf": true, "assert": true, "expect": true, "describe": true, "start": true, "close": true, "write": true, "parse": true, "format": true, "create": true, "update": true, "delete": true, "remove": true, "reset": true, "setup": true, "clone": true, "apply": true, "build": true, "check": true, "fetch": true, "query": true, "route": true, "value": true, "count": true, "index": true, "helper": true}
 
 type astMatch struct {
 	File string `json:"file"`
@@ -175,9 +181,11 @@ func RunAstGrep(bin, root string, files []string) map[string]*AstFacts {
 					if i := strings.LastIndex(v, "."); i >= 0 {
 						v = v[i+1:]
 					}
-					if v != "" {
-						f.Calls = append(f.Calls, v)
+					// ชื่อสั้น/สามัญ (log, ok, fail, run, main …) ทำให้ไฟล์ helper กลายเป็น hub ปลอม — ข้าม (เห็นบน NPM-PORTAL 2026-09-09)
+					if len(v) < 5 || genericCall[strings.ToLower(v)] {
+						continue
 					}
+					f.Calls = append(f.Calls, v)
 				}
 			}
 		}

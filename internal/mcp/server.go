@@ -67,7 +67,7 @@ func tools(c blm.Config) []tool {
 		{"blm_merge", "Resolve a conflicting draft after blm_diff. keep=mine: re-apply the draft's changes on top of the current cloud version (3-way, refuses on overlapping regions) · keep=cloud: drop the draft (snapshot to history) · keep=content: store the text you merged by hand. Owner decides; the replaced version always lands in history/.",
 			obj(map[string]any{"name": noteProps["name"], "keep": enum("", "mine", "cloud", "content"), "content": str("merged body when keep=content")}, "name", "keep")},
 		{"blm_graph", "Built-in repo analysis when no SocratiCode/graphify/Obsidian is available: builds (once, cached in <store>/graph.json) a file graph — with tree-sitter (ast-grep, `blm tools install tree-sitter`) from real AST: imports, definitions and cross-file calls; without it a coarse regex fallback (imports only, marked engine=regex). hubs = most imported/called files, clusters per folder with top symbols, query = find files/symbols matching a word with neighbours (who imports/calls whom). Meaning is not in the graph: install `embedding` (Ollama) or infer it yourself.",
-			obj(map[string]any{"query": str("word to look up (symbol or path); omit = summary"), "path": str("sub path to build from (omit = whole project)"), "rebuild": map[string]any{"type": "boolean", "description": "rebuild graph.json even if cached"}, "limit": map[string]any{"type": "number"}})},
+			obj(map[string]any{"query": str("word to look up (symbol or path); omit = summary"), "path": str("sub path to build from (omit = whole project)"), "rebuild": map[string]any{"type": "boolean", "description": "rebuild graph.json even if cached"}, "html": map[string]any{"type": "boolean", "description": "also write <store>/graph.html — an interactive force graph to open in a browser"}, "limit": map[string]any{"type": "number"}})},
 		{"blm_status", "Everything at once: readiness, binary/project paths, backend/store/mirror, rules file (topics/rules, last read), temp notes + size, history/reports, configured neighbour tools and rtk-gain-style stats — returns `terminal` ready to print", obj(map[string]any{})},
 		{"blm_report", "With rows: compose and save a rules check report (the tool aligns columns by real monospace width, writes reports/<date>-businesslogic.md, records a check stat) and returns `terminal` to print verbatim · without rows: read the latest report (filter by name)",
 			obj(map[string]any{
@@ -189,7 +189,11 @@ func (s *Server) Call(name string, a map[string]any) (any, error) {
 			hits := blm.GraphQuery(g, q, int(lim))
 			return map[string]any{"query": q, "hits": hits, "builtAt": g.BuiltAt}, nil
 		}
-		res := map[string]any{"summary": map[string]any{"engine": g.Engine, "builtAt": g.BuiltAt, "files": g.Files, "edges": len(g.Edges), "callEdges": g.Calls, "unlinked": g.Unlinked, "hubs": g.Hubs, "clusters": blm.ClustersHead(g.Clusters, 25)}, "terminal": blm.RenderGraph(g)}
+		var htmlPath string
+		if h, _ := a["html"].(bool); h {
+			htmlPath, _ = s.store.WriteGraphHTML(g)
+		}
+		res := map[string]any{"html": htmlPath, "summary": map[string]any{"engine": g.Engine, "builtAt": g.BuiltAt, "files": g.Files, "edges": len(g.Edges), "callEdges": g.Calls, "unlinked": g.Unlinked, "hubs": g.Hubs, "clusters": blm.ClustersHead(g.Clusters, 25)}, "terminal": blm.RenderGraph(g)}
 		if g.Engine != "ast-grep" {
 			res["hint"] = "coarse regex mode — no tree-sitter on this machine. Ask the owner: `blm tools install tree-sitter` (ast-grep) for a real AST + call graph; for meaning either `blm tools install embedding` (Ollama, native or --docker) or infer meaning yourself from the code you read"
 		}

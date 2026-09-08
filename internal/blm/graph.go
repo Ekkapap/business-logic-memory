@@ -37,7 +37,8 @@ type Graph struct {
 	Files    int            `json:"files"`
 	Nodes    []GraphNode    `json:"nodes"`
 	Edges    []GraphEdge    `json:"edges"`
-	Hubs     []GraphNode    `json:"hubs"`     // in-degree สูงสุด = โมดูลแกน
+	Hubs     []GraphNode    `json:"hubs"`     // in-degree สูงสุด (โค้ด) = โมดูลแกน
+	DocHubs  []GraphNode    `json:"docHubs"`  // เอกสาร/โน้ตที่ถูกลิงก์มากสุด
 	Clusters []GraphCluster `json:"clusters"` // ต่อโฟลเดอร์ชั้นสอง (src/lib, src/features/X …)
 	Unlinked int            `json:"unlinked"`
 	// Engine = "ast-grep" (tree-sitter จริง มี call graph) หรือ "regex" (โหมดหยาบ ไม่มี tree-sitter บนเครื่อง)
@@ -251,9 +252,21 @@ func (s *Store) BuildGraph(sub string) (Graph, error) {
 	}
 	sort.Slice(g.Edges, func(i, j int) bool { return g.Edges[i].From+g.Edges[i].To < g.Edges[j].From+g.Edges[j].To })
 	hubs := append([]GraphNode(nil), g.Nodes...)
-	sort.Slice(hubs, func(i, j int) bool { return hubs[i].In > hubs[j].In })
-	for i := 0; i < len(hubs) && i < 15 && hubs[i].In > 0; i++ {
-		g.Hubs = append(g.Hubs, GraphNode{Path: hubs[i].Path, Lang: hubs[i].Lang, In: hubs[i].In, Out: hubs[i].Out, Symbols: head(hubs[i].Symbols, 5)})
+	sort.Slice(hubs, func(i, j int) bool {
+		return hubs[i].In > hubs[j].In || (hubs[i].In == hubs[j].In && hubs[i].Path < hubs[j].Path)
+	})
+	for _, h := range hubs {
+		if h.In == 0 {
+			break
+		}
+		row := GraphNode{Path: h.Path, Lang: h.Lang, In: h.In, Out: h.Out, Symbols: head(h.Symbols, 5)}
+		if h.Lang == "md" {
+			if len(g.DocHubs) < 8 {
+				g.DocHubs = append(g.DocHubs, row)
+			}
+		} else if len(g.Hubs) < 15 {
+			g.Hubs = append(g.Hubs, row)
+		}
 	}
 	g.Clusters = clusters(g)
 	_ = os.MkdirAll(s.Dir, 0o755)
@@ -566,7 +579,7 @@ func RenderGraph(g Graph) string {
 		{"Engine", engineLabel(g)},
 		{"Files", fmt.Sprintf("%d source/doc files · %d edges (%d calls) · %d unlinked", g.Files, len(g.Edges), g.Calls, g.Unlinked)},
 	}) + "\n")
-	b.WriteString(Section("Hubs  (most imported → core modules)") + "\n")
+	b.WriteString(Section("Hubs  (most imported/called code → core modules)") + "\n")
 	var rows [][]string
 	for _, h := range g.Hubs {
 		rows = append(rows, []string{Cyan(h.Path), fmt.Sprintf("%d", h.In), fmt.Sprintf("%d", h.Out), strings.Join(h.Symbols, " ")})
@@ -575,6 +588,18 @@ func RenderGraph(g Graph) string {
 		b.WriteString("none — no resolvable imports found\n")
 	} else {
 		b.WriteString(Table([]string{"File", "In", "Out", "Exports"}, rows) + "\n")
+	}
+	if len(g.DocHubs) > 0 {
+		b.WriteString(Section("Doc hubs  (most linked notes/docs)") + "\n")
+		rows = nil
+		for _, h := range g.DocHubs {
+			title := ""
+			if len(h.Symbols) > 0 {
+				title = h.Symbols[0]
+			}
+			rows = append(rows, []string{h.Path, fmt.Sprintf("%d", h.In), fmt.Sprintf("%d", h.Out), title})
+		}
+		b.WriteString(Table([]string{"File", "In", "Out", "Title"}, rows) + "\n")
 	}
 	b.WriteString(Section("Clusters  (by folder → candidate topics)") + "\n")
 	rows = nil

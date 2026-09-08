@@ -21,7 +21,7 @@ const usage = `blm <command> [args]
                                   run inside the project root · --tools installs the listed tools when missing (--docker = socraticode via Docker) · --force skips the project-root check
   status [--json]                 readiness, paths, rules, temp notes, tools, stats
   scan [path] [--json]            survey the repo: sizes, token estimate, sub-projects (candidate main topics)
-  graph [query] [--rebuild]       built-in code graph: hubs, folder clusters, or who-imports-whom for a word
+  graph [query] [--rebuild] [--html]   built-in code graph: hubs, folder clusters, who-imports/calls-whom; --html writes <store>/graph.html
   report [name] [--json]          latest report
   tools <action> [--docker] [tool] status|get|install|start|stop|restart|gen-graph|help  (socraticode|obsidian|graphify)
   sync --push|--pull [--apply] [--parallel] [--author a] [--role r] [--delete a,b]   plan, or with --apply push to AgentsRoom one by one (--parallel = all at once)
@@ -88,7 +88,7 @@ func run(cmd string, args []string) error {
 	case "status":
 		res, err = srv.Call("blm_status", nil2map(nil))
 	case "graph":
-		a := map[string]any{"rebuild": flags["rebuild"] != ""}
+		a := map[string]any{"rebuild": flags["rebuild"] != "", "html": flags["html"] != ""}
 		if len(rest) > 0 {
 			a["query"] = rest[0]
 			asJSON = true
@@ -202,6 +202,9 @@ func run(cmd string, args []string) error {
 	if m, ok := res.(map[string]any); ok && !asJSON {
 		if t, ok := m["terminal"].(string); ok {
 			fmt.Println(t)
+			if h, _ := m["html"].(string); h != "" {
+				fmt.Println("html:", h, " (open it in a browser)")
+			}
 			return nil
 		}
 	}
@@ -246,7 +249,7 @@ func splitFlags(args []string) (map[string]string, []string) {
 			continue
 		}
 		switch k {
-		case "json", "push", "pull", "docker", "apply", "parallel", "rebuild":
+		case "json", "push", "pull", "docker", "apply", "parallel", "rebuild", "html":
 			flags[k] = "1"
 		default:
 			if i+1 < len(args) {
