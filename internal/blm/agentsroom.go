@@ -186,7 +186,6 @@ type PushResult struct {
 	Response string `json:"response,omitempty"`
 	// Verified = memory_list หลัง push ยืนยันว่า updatedAt ใหม่กว่าตอนเริ่ม (หรือโน้ตหายไปแล้วสำหรับ delete)
 	Verified bool `json:"verified"`
-	Retried  bool `json:"retried,omitempty"`
 }
 
 // ListedNote รายการจาก memory_list ที่ใช้ตรวจสอบ
@@ -237,105 +236,70 @@ func short(s string) string {
 	return s
 }
 
-// PushAll ยิง memory_save ทุกรายการพร้อมกัน แล้ว**ตรวจด้วย memory_list** ว่าเข้าจริง (updatedAt ใหม่กว่าตอนเริ่ม)
-// ตัวที่ไม่ผ่านยิงซ้ำทีละตัว (2026-09-09: AgentsRoom ตอบ ok ให้ทุกตัวแต่รับจริงตัวเดียวเมื่อยิงขนาน) แล้ว archive เฉพาะที่ยืนยันแล้ว
-// deletes = ชื่อโน้ตปลายทางที่จะลบ (เช่นโน้ตชื่อเก่าหลัง rename) ยืนยันด้วยการหายจาก memory_list
+// PushAll ยิง memory_save **ทีละตัว** (2026-09-09: AgentsRoom รับขนานได้ตัวเดียว ตัวอื่นตอบ ok แต่ไม่เขียน)
+// แล้วตรวจด้วย memory_list ครั้งเดียวตอนจบ — ไม่ retry ไม่วน: ตัวที่ไม่เข้ารายงานพร้อมข้อความของ server แล้วปล่อยร่างไว้ใน store
+// archive เฉพาะที่ยืนยันแล้ว · deletes ยืนยันด้วยการหายจาก memory_list
 func (s *Store) PushAll(c *Client, plan []SyncItem, author, role string, deletes []string) ([]PushResult, []PushResult) {
 	start := time.Now().UTC().Add(-2 * time.Second).Format(time.RFC3339)
 	results := make([]PushResult, len(plan))
 	deleted := make([]PushResult, len(deletes))
-	save := func(i int, item SyncItem) {
+	for i, item := range plan {
 		t := time.Now()
 		text, err := c.CallTool("memory_save", saveArgs(item, author, role))
 		r := &results[i]
 		r.Name, r.Mode, r.From = item.MemorySave.Name, item.MemorySave.Mode, item.From
-		r.Ms += time.Since(t).Milliseconds()
+		r.Ms = time.Since(t).Milliseconds()
 		r.Response = short(text)
-		r.OK, r.Error = err == nil, ""
+		r.OK = err == nil
 		if err != nil {
 			r.Error = err.Error()
 		}
 	}
-	del := func(i int, name string) {
+	for i, name := range deletes {
 		t := time.Now()
 		text, err := c.CallTool("memory_delete", map[string]any{"name": name})
 		r := &deleted[i]
 		r.Name, r.Mode = name, "delete"
-		r.Ms += time.Since(t).Milliseconds()
+		r.Ms = time.Since(t).Milliseconds()
 		r.Response = short(text)
-		r.OK, r.Error = err == nil, ""
+		r.OK = err == nil
 		if err != nil {
 			r.Error = err.Error()
 		}
 	}
-	var wg sync.WaitGroup
-	for i, item := range plan {
-		wg.Add(1)
-		go func(i int, item SyncItem) { defer wg.Done(); save(i, item) }(i, item)
-	}
-	for i, name := range deletes {
-		wg.Add(1)
-		go func(i int, name string) { defer wg.Done(); del(i, name) }(i, name)
-	}
-	wg.Wait()
-
-	verify := func() {
-		listed, err := c.ListNotes()
-		if err != nil {
-			for i := range results {
-				results[i].Verified = false
-				if results[i].Error == "" {
-					results[i].Error = "verify failed: " + err.Error()
-				}
-			}
-			return
-		}
+	listed, err := c.ListNotes()
+	if err != nil {
 		for i := range results {
-			n, ok := listed[results[i].Name]
-			results[i].Verified = ok && n.UpdatedAt >= start
-			if !results[i].Verified {
-				results[i].OK = false
-				if results[i].Error == "" {
-					results[i].Error = "server answered but memory_list shows no change (updatedAt " + n.UpdatedAt + ")"
-				}
+			if results[i].Error == "" {
+				results[i].Error = "verify failed: " + err.Error()
 			}
+			results[i].OK = false
 		}
-		for i := range deleted {
-			_, still := listed[deleted[i].Name]
-			deleted[i].Verified = !still
-			if still {
-				deleted[i].OK = false
-				if deleted[i].Error == "" {
-					deleted[i].Error = "server answered but the note is still listed"
-				}
-			}
-		}
-	}
-	verify()
-	// รอบสอง: ทีละตัว เฉพาะที่ไม่ผ่าน
-	retried := false
-	for i, item := range plan {
-		if !results[i].Verified {
-			results[i].Retried, retried = true, true
-			save(i, item)
-		}
-	}
-	for i, name := range deletes {
-		if !deleted[i].Verified {
-			deleted[i].Retried, retried = true, true
-			del(i, name)
-		}
-	}
-	if retried {
-		verify()
+		return results, deleted
 	}
 	for i := range results {
+		n, ok := listed[results[i].Name]
+		results[i].Verified = ok && n.UpdatedAt >= start
 		if !results[i].Verified {
+			results[i].OK = false
+			if results[i].Error == "" {
+				results[i].Error = "server answered but memory_list shows no change (updatedAt " + n.UpdatedAt + ") — draft kept in store"
+			}
 			continue
 		}
-		for _, n := range results[i].From {
-			if p, err := s.Archive(n); err == nil {
+		for _, from := range results[i].From {
+			if p, err := s.Archive(from); err == nil {
 				results[i].Archived = append(results[i].Archived, p)
+			}
+		}
+	}
+	for i := range deleted {
+		_, still := listed[deleted[i].Name]
+		deleted[i].Verified = !still
+		if still {
+			deleted[i].OK = false
+			if deleted[i].Error == "" {
+				deleted[i].Error = "server answered but the note is still listed"
 			}
 		}
 	}

@@ -117,19 +117,16 @@ func TestPushAllParallel(t *testing.T) {
 	}
 	defer c.Close()
 	pushed, deleted := s.PushAll(c, s.PlanSync(s.List()), "tester", "qa", []string{"old-note"})
-	ok, retried := 0, 0
+	ok := 0
 	for _, r := range pushed {
 		if r.Verified {
 			ok++
 		} else if r.Name != "boom" || !strings.Contains(r.Error, "rejected") {
 			t.Fatalf("unexpected failure %+v", r)
 		}
-		if r.Retried {
-			retried++
-		}
 	}
-	// รอบขนานเข้าจริงแค่ตัวเดียว → ที่เหลือต้องถูกยิงซ้ำทีละตัวจนยืนยันได้ครบ
-	if ok != 4 || retried < 3 || len(deleted) != 1 || !deleted[0].Verified {
+	// ยิงทีละตัว (server จำลองรับเฉพาะเมื่อไม่มี call ค้าง) → ทุกตัวยกเว้น boom ต้องยืนยันได้ในรอบเดียว ไม่มี retry
+	if ok != 4 || len(deleted) != 1 || !deleted[0].Verified {
 		t.Fatalf("pushed %+v deleted %+v", pushed, deleted)
 	}
 	if left := s.List(); len(left) != 1 || left[0].Name != "boom" {
