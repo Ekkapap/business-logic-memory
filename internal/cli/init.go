@@ -33,6 +33,8 @@ type InitOptions struct {
 	Tools []string
 	// Docker = socraticode แบบ Docker (Windows บังคับ)
 	Docker bool
+	// NoInstall = ตั้ง config แต่ไม่รัน script ติดตั้งเครื่องมือ (ใช้ใน test / เครื่องที่ห้ามติดตั้ง)
+	NoInstall bool
 	// Force = ข้ามการตรวจว่า root เป็นโปรเจ็คจริง
 	Force bool
 	// BackendSet = ผู้ใช้ระบุ backend เอง · false + มี config อยู่แล้ว = ใช้ของเดิม (รัน install ซ้ำต้องไม่เปลี่ยน backend เงียบ ๆ)
@@ -70,6 +72,8 @@ func ParseInit(argv []string) (InitOptions, error) {
 			o.Force = true
 		case "--no-plugin":
 			o.Plugin = false
+		case "--no-install":
+			o.NoInstall = true
 		case "--sandbox":
 			o.Sandbox = true
 		case "--marketplace":
@@ -170,8 +174,31 @@ func looksLikeProject(root string) bool {
 	return false
 }
 
+// failure หนึ่งขั้นที่ล้ม พร้อมผลกระทบและสิ่งที่เจ้าของควรทำ (เจ้าของ 2026-09-09: error แล้วไม่หยุด ทำต่อจนจบ แล้วสรุปตอนท้าย)
+type failure struct{ step, err, impact, action string }
+
 func Init(o InitOptions) []string {
 	var log []string
+	var failures []failure
+	say := func(line string) {
+		log = append(log, line)
+		if o.Out != nil {
+			fmt.Fprintln(o.Out, line)
+		}
+	}
+	// step พิมพ์ "installing: <name> …" ก่อนทำ แล้ว "  ✔ done" หรือ "  ✘ error … (continuing)" — ไม่หยุด process
+	step := func(name, impact, action string, fn func() (string, error)) {
+		if o.Out != nil {
+			fmt.Fprintf(o.Out, "installing: %s …\n", name)
+		}
+		detail, err := fn()
+		if err != nil {
+			failures = append(failures, failure{name, err.Error(), impact, action})
+			say("  ✘ " + name + " error: " + err.Error() + " (continuing)")
+			return
+		}
+		say("  ✔ " + name + " done" + map[bool]string{true: "  " + detail, false: ""}[detail != ""])
+	}
 	if !o.Force && !looksLikeProject(o.Root) {
 		return []string{
 			"stop     " + o.Root + " does not look like a project root (no .git, .agentsroom, package.json, go.mod, CLAUDE.md, …)",
@@ -194,16 +221,16 @@ func Init(o InitOptions) []string {
 			if o.Tools == nil {
 				o.Tools = existing.Tools
 			}
-			log = append(log, "config   existing "+blm.ConfigFile+" kept (backend "+string(c.Backend)+") — pass --agentsroom/--obsidian/--dir to change")
+			say("config   existing " + blm.ConfigFile + " kept (backend " + string(c.Backend) + ") — pass --agentsroom/--obsidian/--dir to change")
 		// ไม่ระบุ backend = ดูโปรเจ็คก่อน (เจ้าของ 2026-09-09): มี AgentsRoom → agentsroom · เป็น vault → obsidian · ไม่งั้น none
 		case exists(filepath.Join(o.Root, blm.Presets[blm.BackendAgentsRoom].Mirror)) || exists(filepath.Join(o.Root, ".agentsroom")):
 			c = blm.Presets[blm.BackendAgentsRoom]
-			log = append(log, "backend  agentsroom auto-detected (.agentsroom/ found) — pass --obsidian or --dir to override")
+			say("backend  agentsroom auto-detected (.agentsroom/ found) — pass --obsidian or --dir to override")
 		case exists(filepath.Join(o.Root, ".obsidian")):
 			c = blm.Presets[blm.BackendObsidian]
-			log = append(log, "backend  obsidian auto-detected (.obsidian/ found)")
+			say("backend  obsidian auto-detected (.obsidian/ found)")
 		default:
-			log = append(log, "backend  none (no .agentsroom/ or .obsidian/ found) — files in "+c.Store+" are the truth")
+			say("backend  none (no .agentsroom/ or .obsidian/ found) — files in " + c.Store + " are the truth")
 		}
 		if o.Store != "" {
 			c.Store = o.Store
@@ -222,23 +249,36 @@ func Init(o InitOptions) []string {
 	if o.Backend == blm.BackendObsidian && !contains(c.Tools, "obsidian") {
 		c.Tools = append(c.Tools, "obsidian")
 	}
-	// ติดตั้งตัวที่เลือกไว้แต่ยังไม่มี (เฉพาะเมื่อสั่ง --tools ชัด ๆ ไม่ติดตั้งจากการเดา)
-	if o.Tools != nil {
-		installed := map[string]bool{}
-		for _, t := range blm.DetectTools(o.Root, c) {
-			installed[t.Name] = t.Installed
+	// ไม่ระบุ --tools → tree-sitter (ast-grep) ติดตั้งอัตโนมัติเสมอ (เจ้าของ 2026-09-09) เพราะ blm_graph ต้องใช้ AST จริง
+	if o.Tools == nil && !contains(c.Tools, "tree-sitter") {
+		c.Tools = append(c.Tools, "tree-sitter")
+	}
+	// ติดตั้งตัวที่เลือก/ตั้งอัตโนมัติแต่ยังไม่มี — ทีละตัว ล้มก็ไปต่อ
+	installed := map[string]bool{}
+	for _, t := range blm.DetectTools(o.Root, c) {
+		installed[t.Name] = t.Installed
+	}
+	toolImpact := map[string][2]string{
+		"tree-sitter": {"blm_graph falls back to coarse regex (imports only, no call graph)", "blm tools install tree-sitter   # mac: brew install ast-grep · linux: cargo install ast-grep / npm i -g @ast-grep/cli"},
+		"socraticode": {"no semantic code search for the agent; blm_graph still works", "blm tools install socraticode  (needs Ollama; add --docker to run Qdrant/Ollama in Docker)"},
+		"embedding":   {"no local embeddings — the agent infers meaning from code itself", "blm tools install embedding [--docker]"},
+		"graphify":    {"no graphify knowledge graph; blm_graph covers structure", "pipx install graphifyy && graphify install --platform claude"},
+		"obsidian":    {"no Obsidian vault view of the notes", "brew install --cask obsidian (mac) · winget install Obsidian.Obsidian"},
+	}
+	for _, t := range c.Tools {
+		if installed[t] {
+			say("  ✔ " + t + " already installed")
+			continue
 		}
-		for _, t := range c.Tools {
-			if installed[t] {
-				log = append(log, "tools    "+t+" already installed")
-				continue
-			}
-			if _, err := blm.Tools(o.Root, c, "install", t, o.Docker, o.Out); err != nil {
-				log = append(log, "tools    "+t+" install failed: "+err.Error())
-			} else {
-				log = append(log, "tools    "+t+" installed")
-			}
+		if o.NoInstall {
+			say("  · " + t + " not installed (skipped: --no-install)")
+			continue
 		}
+		imp := toolImpact[t]
+		step(t, imp[0], imp[1], func() (string, error) {
+			out, err := blm.Tools(o.Root, c, "install", t, o.Docker, o.Out)
+			return strings.TrimSpace(out), err
+		})
 	}
 	if o.CustomCLI != "" {
 		// /blm_init จะอ่าน `<cli> --help` แล้วแทนสองบรรทัดนี้ด้วยคำสั่งจริง ใช้ {name} {file} {folder} {description}
@@ -252,9 +292,9 @@ func Init(o InitOptions) []string {
 			if entries, _ := os.ReadDir(filepath.Join(o.Root, c.Store)); len(entries) == 0 {
 				_ = os.Remove(filepath.Join(o.Root, c.Store)) // dir ว่างที่ blm status สร้างไว้ก่อน init
 				if err := migrate(old, filepath.Join(o.Root, c.Store)); err == nil {
-					log = append(log, "migrate  "+oldStoreDir+" -> "+c.Store+" (project-business-logic -> blm)")
+					say("migrate  " + oldStoreDir + " -> " + c.Store + " (project-business-logic -> blm)")
 				} else {
-					log = append(log, "migrate  could not move "+oldStoreDir+": "+err.Error())
+					say("migrate  could not move " + oldStoreDir + ": " + err.Error())
 				}
 			}
 		}
@@ -269,7 +309,7 @@ func Init(o InitOptions) []string {
 	if c.Mirror != "" {
 		line += " mirror=" + c.Mirror
 	}
-	log = append(log, line+"  tools="+strings.Join(c.Tools, ","))
+	say(line + "  tools=" + strings.Join(c.Tools, ","))
 	_ = os.MkdirAll(filepath.Join(o.Root, c.Store), 0o755)
 	// ignore: ของที่เป็น output/สำเนาของเครื่องมืออื่นต้องไม่ถูกวิเคราะห์หรือ index ซ้ำ (เจ้าของ 2026-09-09):
 	// store ของ blm เอง (ร่าง/history/reports), graphify-out/, vault ของ Obsidian, สถานะแอปใน .agentsroom (ยกเว้น mirror memory)
@@ -277,7 +317,7 @@ func Init(o InitOptions) []string {
 	ign := filepath.Join(o.Root, ".ignorememory")
 	if _, err := os.Stat(ign); err != nil {
 		_ = os.WriteFile(ign, []byte("# blm: paths to skip during /blm_init analysis, on top of .gitignore and .socraticodeignore (merged automatically)\n# one gitignore-style pattern per line — tool outputs and blm's own store are never project knowledge\n"+strings.Join(ignoreLines, "\n")+"\n"), 0o644)
-		log = append(log, "ignore   .ignorememory created ("+strings.Join(ignoreLines, " ")+")")
+		say("ignore   .ignorememory created (" + strings.Join(ignoreLines, " ") + ")")
 	}
 	// socraticode ใช้ในโปรเจ็คนี้ → กัน index ซ้ำ: เติมบรรทัดที่ยังไม่มีเข้า .socraticodeignore (ไม่แตะของเดิม)
 	if contains(c.Tools, "socraticode") {
@@ -295,7 +335,7 @@ func Init(o InitOptions) []string {
 			}
 			cur += "\n# blm: tool outputs — indexed elsewhere or regenerated, never index twice\n" + strings.Join(add, "\n") + "\n"
 			if err := os.WriteFile(sci, []byte(cur), 0o644); err == nil {
-				log = append(log, "ignore   .socraticodeignore += "+strings.Join(add, " "))
+				say("ignore   .socraticodeignore += " + strings.Join(add, " "))
 			}
 		}
 	}
@@ -320,9 +360,10 @@ func Init(o InitOptions) []string {
 	kept = append(kept, map[string]any{"matcher": "Bash", "hooks": []any{map[string]any{"type": "command", "command": "blm guard", "timeout": 5, "statusMessage": "blm guard"}}})
 	hooks["PreToolUse"] = kept
 	if err := writeJSON(sf, settings); err != nil {
-		log = append(log, "settings cannot write .claude/settings.json ("+err.Error()+") — add manually: permissions.deny Edit/Write("+c.Store+"/**) · sandbox.filesystem.denyWrite "+c.Store+" · hooks.PreToolUse Bash -> blm guard")
+		say("settings cannot write .claude/settings.json (" + err.Error() + ")")
+		failures = append(failures, failure{"settings", err.Error(), "the store is not locked — Edit/Write/Bash can modify blm notes", "add to .claude/settings.json: permissions.deny Edit/Write(" + c.Store + "/**) · sandbox.filesystem.denyWrite " + c.Store + " · hooks.PreToolUse Bash -> blm guard"})
 	} else {
-		log = append(log, "settings .claude/settings.json merged (deny Edit/Write · sandbox denyWrite · PreToolUse hook `blm guard`)")
+		say("settings .claude/settings.json merged (deny Edit/Write · sandbox denyWrite · PreToolUse hook `blm guard`)")
 	}
 	_ = os.Remove(filepath.Join(o.Root, ".claude", "hooks", "guard-memory-temp.sh"))
 
@@ -334,34 +375,49 @@ func Init(o InitOptions) []string {
 		sb := sub(u, "sandbox")
 		sb["enabled"], sb["allowUnsandboxedCommands"] = true, false
 		if err := writeJSON(uf, u); err != nil {
-			log = append(log, "sandbox  cannot write ~/.claude/settings.json: "+err.Error())
+			say("sandbox  cannot write ~/.claude/settings.json: " + err.Error())
 		} else {
-			log = append(log, "sandbox  ~/.claude/settings.json enabled=true allowUnsandboxedCommands=false (OS-level guard)")
+			say("sandbox  ~/.claude/settings.json enabled=true allowUnsandboxedCommands=false (OS-level guard)")
 		}
 	} else if home, _ := os.UserHomeDir(); sub(readJSON(filepath.Join(home, ".claude", "settings.json")), "sandbox")["enabled"] == true {
-		log = append(log, "sandbox  already enabled in ~/.claude/settings.json (OS-level guard covers denyWrite)")
+		say("sandbox  already enabled in ~/.claude/settings.json (OS-level guard covers denyWrite)")
 	} else {
-		log = append(log, "sandbox  off — `blm guard` only filters command text; for a kernel-level lock rerun with --sandbox or use /sandbox in Claude Code")
+		say("sandbox  off — `blm guard` only filters command text; for a kernel-level lock rerun with --sandbox or use /sandbox in Claude Code")
 	}
 
 	// 4. PATH + plugin
-	log = append(log, "path     "+EnsurePath())
+	say("path     " + EnsurePath())
 	if o.Plugin {
 		run := o.Run
 		if run == nil {
 			run = shell
 		}
-		if _, err := run("claude", "--version"); err != nil {
-			log = append(log, "plugin   `claude` not on PATH — install Claude Code, then run: claude plugin marketplace add "+o.Marketplace+" && claude plugin install "+PluginName+"@"+PluginName)
-		} else {
-			_, e1 := run("claude", "plugin", "marketplace", "add", o.Marketplace)
-			out, e2 := run("claude", "plugin", "install", PluginName+"@"+PluginName)
-			status := "ok"
-			if e1 != nil || e2 != nil {
-				status = "failed (" + strings.TrimSpace(out) + ") — run: claude plugin marketplace add " + o.Marketplace + " && claude plugin install " + PluginName + "@" + PluginName
+		manual := "claude plugin marketplace add " + o.Marketplace + " && claude plugin install " + PluginName + "@" + PluginName
+		step("claude plugin blm", "Claude Code has no blm_* tools / slash commands", manual, func() (string, error) {
+			if _, err := run("claude", "--version"); err != nil {
+				return "", fmt.Errorf("`claude` not on PATH")
 			}
-			log = append(log, "plugin   "+status)
+			if out, err := run("claude", "plugin", "marketplace", "add", o.Marketplace); err != nil && !strings.Contains(out, "already") {
+				return "", fmt.Errorf("marketplace add: %s", strings.TrimSpace(out))
+			}
+			if out, err := run("claude", "plugin", "install", PluginName+"@"+PluginName); err != nil && !strings.Contains(out, "already") {
+				return "", fmt.Errorf("install: %s", strings.TrimSpace(out))
+			}
+			return "", nil
+		})
+	}
+	// สรุปท้าย: อะไรล้ม กระทบอะไร ควรทำอะไร (ทั้งหมดถูกพิมพ์ระหว่างทางแล้ว นี่คือรายการรวม)
+	if len(failures) > 0 {
+		say("")
+		say(fmt.Sprintf("summary  %d step(s) failed — blm still works, with these limits:", len(failures)))
+		for _, f := range failures {
+			say("  ✘ " + f.step + ": " + f.err)
+			say("      impact: " + f.impact)
+			say("      fix:    " + f.action)
 		}
+	} else {
+		say("")
+		say("summary  all steps done")
 	}
 	return append(log, "next     open Claude Code in the project -> /reload-plugins -> /blm_init to analyse the project and draft blm.md · check: blm status")
 }

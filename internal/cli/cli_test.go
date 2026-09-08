@@ -33,6 +33,7 @@ func TestInitPresetsIdempotentAndMigrate(t *testing.T) {
 			t.Fatal(err)
 		}
 		var calls []string
+		o.NoInstall = true
 		o.Run = func(cmd ...string) (string, error) { calls = append(calls, strings.Join(cmd, " ")); return "", nil }
 		log := Init(o)
 		c := blm.Load(root)
@@ -75,9 +76,11 @@ func TestInitPresetsIdempotentAndMigrate(t *testing.T) {
 	root := t.TempDir()
 	_ = os.MkdirAll(filepath.Join(root, ".git"), 0o755)
 	o, _ := ParseInit([]string{root, "--agentsroom"})
+	o.NoInstall = true
 	o.Run = func(cmd ...string) (string, error) { return "", nil }
 	Init(o)
 	o2, _ := ParseInit([]string{root})
+	o2.NoInstall = true
 	o2.Run = o.Run
 	Init(o2)
 	if got := blm.Load(root); got.Backend != blm.BackendAgentsRoom {
@@ -87,6 +90,7 @@ func TestInitPresetsIdempotentAndMigrate(t *testing.T) {
 	root2 := t.TempDir()
 	_ = os.MkdirAll(filepath.Join(root2, ".agentsroom", "memory"), 0o755)
 	o3, _ := ParseInit([]string{root2})
+	o3.NoInstall = true
 	o3.Run = o.Run
 	Init(o3)
 	if got := blm.Load(root2); got.Backend != blm.BackendAgentsRoom || got.Store != ".agentsroom/blm" {
@@ -95,10 +99,12 @@ func TestInitPresetsIdempotentAndMigrate(t *testing.T) {
 	// โฟลเดอร์เปล่าไม่ใช่โปรเจ็ค → ปฏิเสธ เว้นแต่ --force
 	empty := t.TempDir()
 	o4, _ := ParseInit([]string{empty})
+	o4.NoInstall = true
 	if log := Init(o4); !strings.HasPrefix(log[0], "stop") || exists(filepath.Join(empty, blm.ConfigFile)) {
 		t.Fatalf("empty dir must be refused: %v", log)
 	}
 	o5, _ := ParseInit([]string{empty, "--force"})
+	o5.NoInstall = true
 	o5.Run = o.Run
 	if log := Init(o5); strings.HasPrefix(log[0], "stop") {
 		t.Fatalf("--force must proceed: %v", log)

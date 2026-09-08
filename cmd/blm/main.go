@@ -17,7 +17,7 @@ import (
 
 const usage = `blm <command> [args]
 
-  init [path] [--agentsroom | --obsidian | --dir <p> --backend <cli>] [--tools a,b] [--docker] [--no-plugin] [--sandbox] [--marketplace <dir|owner/repo>]
+  init [path] [--agentsroom | --obsidian | --dir <p> --backend <cli>] [--tools a,b] [--docker] [--no-install] [--no-plugin] [--sandbox] [--marketplace <dir|owner/repo>]
                                   run inside the project root · --tools installs the listed tools when missing (--docker = socraticode via Docker) · --force skips the project-root check
   status [--json]                 readiness, paths, rules, temp notes, tools, stats
   scan [path] [--json]            survey the repo: sizes, token estimate, sub-projects (candidate main topics)
@@ -63,8 +63,11 @@ func run(cmd string, args []string) error {
 			return err
 		}
 		o.Out = os.Stdout
-		for _, line := range cli.Init(o) {
-			fmt.Println(line)
+		lines := cli.Init(o)
+		if len(lines) > 0 && strings.HasPrefix(lines[0], "stop") { // ถูกปฏิเสธก่อนเริ่ม: ยังไม่มีอะไรพิมพ์
+			fmt.Println(strings.Join(lines, "\n"))
+		} else {
+			fmt.Println(lines[len(lines)-1]) // บรรทัด next (ที่เหลือพิมพ์สดไปแล้ว)
 		}
 		return nil
 	case "path":
