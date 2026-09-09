@@ -86,6 +86,10 @@ func run(cmd string, args []string) error {
 		return nil
 	}
 	// ที่เหลือคือ tool ของ MCP เรียกผ่านโค้ดชุดเดียวกัน — ผู้ใช้ได้ผลเหมือน agent โดยไม่ผ่าน AI
+	// ไม่มี .claude/blm.json ในโฟลเดอร์นี้ = รันผิดที่ (เจ้าของเจอบ่อย 2026-09-09: "backend none has no sync target" ไม่บอกอะไร)
+	if _, err := os.Stat(filepath.Join(root, blm.ConfigFile)); err != nil && cmd != "init" && cmd != "version" && cmd != "path" && cmd != "guard" && cmd != "mcp" {
+		return fmt.Errorf("no %s here (%s) — run blm inside the project folder, e.g. cd <project> && blm %s", blm.ConfigFile, root, cmd)
+	}
 	srv := mcp.New(root)
 	flags, rest := splitFlags(args)
 	asJSON := flags["json"] != ""
