@@ -335,18 +335,71 @@ cloudUpdatedAt: %s
 	}
 	// ผล 3-way ที่มี marker เลข id (ใช้ประกอบกลับ) + base เลื่อนไปที่ cloud ปัจจุบันตอน resolve
 	_ = os.WriteFile(filepath.Join(s.conflictsDir(), name+".merged.md"), []byte("cloudUpdatedAt: "+cloud.UpdatedAt+"\n---\n"+strings.Join(out, "\n")), 0o644)
-	// ป้ายสองที่ (เจ้าของ 2026-09-09): ในโน้ตที่ชน ตรงหัวข้อของบริเวณนั้น (บอกว่าแก้ตรงไหน) และใน blm.md ตรง main/sub topic (บอกว่าชนเรื่องอะไรของ business logic)
-	if name != RulesNote {
-		tagged := conflictTagRe.ReplaceAllString(draft.Content, "")
-		for _, h := range headOrder {
-			tagged = tagLine(tagged, h, noteHeads[h])
+	// ไม่ติดป้ายตอนออกรายงาน — ป้ายเกิดเมื่อสั่ง Mark แยกต่างหาก (เจ้าของ 2026-09-09: "blm_conflict report / blm_conflict mark")
+	return reports, nil
+}
+
+// MarkResult ผลการติดป้าย
+type MarkResult struct {
+	Waiting int      `json:"waiting"`
+	Notes   []string `json:"notes"` // โน้ตที่ถูกแก้ป้าย (รวม blm.md)
+}
+
+// Mark ติดป้าย [Conflict](<report>) ตามรายงานที่ยัง wait ทั้งหมด แล้วลบป้ายที่ไม่มีรายงานค้างแล้ว — เรียกซ้ำได้ ผลเท่าเดิม
+// แยกจากการออกรายงานตามที่เจ้าของกำหนด 2026-09-09: report = เขียนรายงานเท่านั้น · mark = แตะ blm.md/โน้ต
+func (s *Store) Mark() MarkResult {
+	all := s.ListConflicts()
+	res := MarkResult{}
+	byNote := map[string][]ConflictReport{}
+	var notes []string
+	for _, c := range all {
+		if c.Draft == RulesNote {
+			continue
 		}
-		if _, err := s.save(Input{Name: name, Content: tagged, HasContent: true}, "conflict-tag"); err != nil {
-			return nil, err
+		if _, ok := byNote[c.Draft]; !ok {
+			notes = append(notes, c.Draft)
+		}
+		if c.Status == "wait" {
+			byNote[c.Draft] = append(byNote[c.Draft], c)
+		} else if _, ok := byNote[c.Draft]; !ok {
+			byNote[c.Draft] = nil
 		}
 	}
-	s.refreshRuleTags()
-	return reports, nil
+	for _, c := range all {
+		if c.Status == "wait" {
+			res.Waiting++
+		}
+	}
+	for _, name := range notes {
+		n, err := s.Get(name)
+		if err != nil {
+			continue
+		}
+		content := conflictTagRe.ReplaceAllString(n.Content, "")
+		byHead := map[string][]string{}
+		var order []string
+		for _, c := range byNote[name] {
+			if _, ok := byHead[c.NoteHeading]; !ok {
+				order = append(order, c.NoteHeading)
+			}
+			byHead[c.NoteHeading] = append(byHead[c.NoteHeading], tagFor(len(byHead[c.NoteHeading])+1, filepath.Join(s.Root, c.File)))
+		}
+		for _, h := range order {
+			content = tagLine(content, h, byHead[h])
+		}
+		if content != n.Content {
+			if _, err := s.save(Input{Name: name, Content: content, HasContent: true}, "conflict-tag"); err == nil {
+				res.Notes = append(res.Notes, name)
+			}
+		}
+	}
+	if before, _ := s.Get(RulesNote); s.RulesPath() != "" {
+		s.refreshRuleTags()
+		if after, _ := s.Get(RulesNote); after.Content != before.Content {
+			res.Notes = append(res.Notes, RulesNote)
+		}
+	}
+	return res
 }
 
 // tagFor = `[Conflict](<conflicts/[wait] report.md>)` ลิงก์ไปรายงาน relative จากโน้ตใน store (เจ้าของ 2026-09-09: ไม่ต้องมีเลข)
@@ -550,29 +603,6 @@ func (s *Store) ResolveConflicts(name string) (map[string]any, error) {
 	remaining := append(append([]string{}, pending...), both...)
 	sort.Strings(remaining)
 	content = conflictTagRe.ReplaceAllString(content, "")
-	if name != RulesNote { // ป้ายในโน้ตเหลือเฉพาะรายงานที่ยังไม่จบ · ถ้าโน้ตคือ blm.md เอง refreshRuleTags ท้ายสุดจัดการ
-		byHead := map[string][]string{}
-		var hOrder []string
-		for _, c := range mine {
-			tag := "#" + strconv.Itoa(c.ID)
-			keep := false
-			for _, r := range remaining {
-				if r == tag {
-					keep = true
-				}
-			}
-			if !keep {
-				continue
-			}
-			if _, ok := byHead[c.NoteHeading]; !ok {
-				hOrder = append(hOrder, c.NoteHeading)
-			}
-			byHead[c.NoteHeading] = append(byHead[c.NoteHeading], tagFor(len(byHead[c.NoteHeading])+1, filepath.Join(s.Root, c.File)))
-		}
-		for _, h := range hOrder {
-			content = tagLine(content, h, byHead[h])
-		}
-	}
 	draft, err := s.Get(name)
 	if err != nil {
 		return nil, err
@@ -593,7 +623,7 @@ func (s *Store) ResolveConflicts(name string) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	s.refreshRuleTags() // รายงานที่ done ถูก rename แล้ว → ป้ายเลขนั้นหายจาก blm.md ทันที ที่ยัง wait คงอยู่
+	s.Mark() // รายงานที่ done ถูก rename แล้ว → ป้ายของเลขนั้นหายจาก blm.md และโน้ต ที่ยัง wait คงอยู่
 	res := map[string]any{"ok": len(remaining) == 0, "name": n.Name, "done": done, "pending": pending, "bothChecked": both, "base": n.Base, "bytes": len(n.Content)}
 	if len(remaining) == 0 {
 		res["next"] = "blm_sync {apply:true} to push"

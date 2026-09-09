@@ -29,6 +29,7 @@ const usage = `blm <command> [args]
   sync --push|--pull [--apply] [--parallel] [--author a] [--role r] [--delete a,b]   plan, or with --apply push to AgentsRoom one by one (--parallel = all at once)
   diff <name> · merge <name> mine|cloud|content [file]   see what changed on the cloud vs your draft, then resolve
   conflicts [<id>] [-i] [--all]   waiting conflicts, one per block with its report path · <id> prints the report · -i pick → read → decide (c/i) · --all includes done
+  conflict mark                   put [Conflict] marks into blm.md and the notes for every waiting report (reports alone change nothing)
   restore <history-file> <note>   put a history/ snapshot back as the note (blm restore <note> lists snapshots)
   resolve <name> [--keep current|incoming] [--no-push]  apply the decision, then push the note so the backend equals local (--no-push to skip)
   get <name> · create <name> <file|-> [--target t] [--mode m] [--folder f] [--description d] · append <name> <file|-> · patch <name> <find> <replace> · replace <name> <file|-> [--confirm] · delete <name>
@@ -192,6 +193,11 @@ func run(cmd string, args []string) error {
 		res, err = srv.Call("blm_merge", a)
 		asJSON = true
 	case "conflicts", "conflict":
+		if len(rest) > 0 && rest[0] == "mark" {
+			res, err = srv.Call("blm_conflict", map[string]any{"action": "mark"})
+			asJSON = true
+			break
+		}
 		if flags["i"] != "" || flags["interactive"] != "" {
 			return interactiveConflicts(srv)
 		}

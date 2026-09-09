@@ -148,7 +148,7 @@ cloudUpdatedAt: %s
 	if err := os.WriteFile(filepath.Join(s.conflictsDir(), RulesNote+".merged.md"), []byte("cloudUpdatedAt: "+cloudAt+"\n---\n"+strings.Join(out, "\n")), 0o644); err != nil {
 		return ConflictReport{}, err
 	}
-	s.refreshRuleTags()
+	// ไม่ติดป้ายที่นี่ — Mark แยกต่างหาก
 	return ConflictReport{ID: id, File: s.rel(file), Status: "wait", Draft: RulesNote, Topic: topic, Heading: heading, Created: now, NoteHeading: "## " + heading, Kind: "proposal"}, nil
 }
 

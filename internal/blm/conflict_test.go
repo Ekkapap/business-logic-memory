@@ -16,6 +16,7 @@ func TestConflictWorkflow(t *testing.T) {
 	// cloud แก้บรรทัดเดียวกัน → ชน
 	_ = os.WriteFile(p, []byte("---\nname: \"blm\"\nfolder: \"features\"\nupdatedAt: \"2026-09-02T00:00:00Z\"\n---\n\n# Authentication\n\n## LINE Login\n- rule one\n- rule two (cloud)\nmemory: x\n"), 0o644)
 	reports, err := s.OpenConflict("blm", "Authentication", "LINE Login", "cloud says cloud, draft says mine")
+	s.Mark()
 	if err != nil || len(reports) != 1 || reports[0].Status != "wait" || !strings.Contains(reports[0].File, "/[wait] line-login-20") {
 		t.Fatalf("open: %v %+v", err, reports)
 	}
@@ -91,6 +92,12 @@ func TestConflictOnOtherNoteTagsRules(t *testing.T) {
 	reports, err := s.OpenConflict("line-login", "Authentication", "LINE Login", "ทดสอบ")
 	if err != nil || len(reports) != 1 {
 		t.Fatalf("open: %v %+v", err, reports)
+	}
+	if rules, _ := s.Get("blm"); strings.Contains(rules.Content, "[Conflict") {
+		t.Fatal("report alone must not touch blm.md")
+	}
+	if mr := s.Mark(); mr.Waiting != 1 {
+		t.Fatalf("mark: %+v", mr)
 	}
 	rules, _ := s.Get("blm")
 	want := "memory: [Conflict](<conflicts/[wait] line-login-20"
@@ -200,6 +207,7 @@ func TestProposeIsAConflictReportForTheOwner(t *testing.T) {
 	if err != nil || r2.ID != 2 {
 		t.Fatalf("propose new heading: %v %+v", err, r2)
 	}
+	s.Mark()
 	rules, _ := s.Get("blm")
 	if !strings.Contains(rules.Content, "- old rule") || !strings.Contains(rules.Content, "## Login [Conflict](<conflicts/") || !strings.Contains(rules.Content, "# Auth [Conflict](<conflicts/") {
 		t.Fatalf("blm.md must be untouched but tagged: %q", rules.Content)
