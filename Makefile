@@ -4,8 +4,16 @@ LD = -X github.com/Ekkapap/business-logic-memory/internal/blm.Version=$(VERSION)
 
 build:      ## bin/blm สำหรับเครื่องนี้
 	go build -ldflags "$(LD)" -o bin/blm ./cmd/blm
-install:    ## ~/.local/bin/blm แล้วเติม PATH
-	mkdir -p $(HOME)/.local/bin && go build -ldflags "$(LD)" -o $(HOME)/.local/bin/blm ./cmd/blm && $(HOME)/.local/bin/blm path
+# build ลง ./bin/blm (ใน repo) แล้วให้ ~/.local/bin/blm เป็น symlink มาที่นี่ — agent ที่ถูก sandbox เขียน ~/.local/bin ไม่ได้จึง build เองได้ (เจ้าของเลือก 2026-09-09)
+# symlink สร้างครั้งแรกอัตโนมัติ · ถ้ามีไฟล์จริงอยู่ (ติดตั้งแบบเก่า) จะบอกให้เจ้าของแทนด้วย ln -sf เอง
+install:    ## ./bin/blm + symlink ~/.local/bin/blm → ./bin/blm
+	mkdir -p bin && GOCACHE=$${GOCACHE:-$${TMPDIR:-/tmp}/gocache} go build -ldflags "$(LD)" -o bin/blm ./cmd/blm
+	@if [ -L $(HOME)/.local/bin/blm ] || [ ! -e $(HOME)/.local/bin/blm ]; then \
+		mkdir -p $(HOME)/.local/bin 2>/dev/null; ln -sfn $(CURDIR)/bin/blm $(HOME)/.local/bin/blm 2>/dev/null || echo "symlink not writable here — run once: ln -sf $(CURDIR)/bin/blm ~/.local/bin/blm"; \
+	else \
+		echo "~/.local/bin/blm is a real file — replace it once with: ln -sf $(CURDIR)/bin/blm ~/.local/bin/blm"; \
+	fi
+	@./bin/blm version
 test:
 	go vet ./... && go test ./...
 # make release                       → next patch version automatically (last remote tag +1)
