@@ -17,6 +17,7 @@ install-local:    ## ./bin/blm + symlink ~/.local/bin/blm → ./bin/blm
 	fi
 	@./bin/blm version
 	@echo "then in Claude Code:  /mcp reconnect plugin:blm:blm"
+	@printf "/mcp reconnect plugin:blm:blm" | pbcopy 2>/dev/null && echo "(copied to clipboard — just paste and Enter)" || true
 install-global:   ## แทนที่ ~/.local/bin/blm ด้วยไฟล์จริง แล้วเติม PATH
 	mkdir -p $(HOME)/.local/bin && go build -ldflags "$(LD)" -o $(HOME)/.local/bin/blm ./cmd/blm && $(HOME)/.local/bin/blm path
 test:
