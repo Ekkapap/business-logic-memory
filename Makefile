@@ -16,6 +16,7 @@ install-local:    ## ./bin/blm + symlink ~/.local/bin/blm → ./bin/blm
 		echo "~/.local/bin/blm is a real file (global install) — switch to local once with: ln -sf $(CURDIR)/bin/blm ~/.local/bin/blm"; \
 	fi
 	@./bin/blm version
+	@echo "then in Claude Code:  /mcp reconnect plugin:blm:blm"
 install-global:   ## แทนที่ ~/.local/bin/blm ด้วยไฟล์จริง แล้วเติม PATH
 	mkdir -p $(HOME)/.local/bin && go build -ldflags "$(LD)" -o $(HOME)/.local/bin/blm ./cmd/blm && $(HOME)/.local/bin/blm path
 test:
