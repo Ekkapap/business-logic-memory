@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -99,7 +100,6 @@ func run(cmd string, args []string) error {
 		a := map[string]any{"rebuild": flags["rebuild"] != "", "html": flags["html"] != ""}
 		if len(rest) > 0 {
 			a["query"] = rest[0]
-			asJSON = true
 		}
 		res, err = srv.Call("blm_graph", a)
 	case "scan":
@@ -146,13 +146,11 @@ func run(cmd string, args []string) error {
 			}
 		}
 		res, err = srv.Call("blm_sync", a)
-		asJSON = true
 	case "get", "delete":
 		if len(rest) < 1 {
 			return fmt.Errorf("blm %s <name>", cmd)
 		}
 		res, err = srv.Call("blm_"+cmd, map[string]any{"name": rest[0]})
-		asJSON = true
 	case "create", "append", "replace":
 		if len(rest) < 2 {
 			return fmt.Errorf("blm %s <name> <file|-> [--target t] [--mode m] [--folder f] [--description d]", cmd)
@@ -171,13 +169,11 @@ func run(cmd string, args []string) error {
 			a["confirm"] = true
 		}
 		res, err = srv.Call("blm_"+cmd, a)
-		asJSON = true
 	case "diff":
 		if len(rest) < 1 {
 			return fmt.Errorf("blm diff <name>")
 		}
 		res, err = srv.Call("blm_diff", map[string]any{"name": rest[0]})
-		asJSON = true
 	case "merge":
 		if len(rest) < 2 {
 			return fmt.Errorf("blm merge <name> mine|cloud|content [file|-]")
@@ -191,11 +187,9 @@ func run(cmd string, args []string) error {
 			a["content"] = c
 		}
 		res, err = srv.Call("blm_merge", a)
-		asJSON = true
 	case "conflicts", "conflict":
 		if len(rest) > 0 && rest[0] == "mark" {
 			res, err = srv.Call("blm_conflict", map[string]any{"action": "mark"})
-			asJSON = true
 			break
 		}
 		if flags["i"] != "" || flags["interactive"] != "" {
@@ -220,7 +214,6 @@ func run(cmd string, args []string) error {
 		default:
 			return fmt.Errorf("blm restore <history-file> <note>   (blm restore <note> lists its history)")
 		}
-		asJSON = true
 	case "resolve":
 		if len(rest) < 1 {
 			return fmt.Errorf("blm resolve <note> [--keep current|incoming]")
@@ -233,13 +226,11 @@ func run(cmd string, args []string) error {
 			a["push"] = false
 		}
 		res, err = srv.Call("blm_resolve", a)
-		asJSON = true
 	case "patch":
 		if len(rest) < 3 {
 			return fmt.Errorf("blm patch <name> <find> <replace>")
 		}
 		res, err = srv.Call("blm_patch", map[string]any{"name": rest[0], "find": rest[1], "replace": rest[2]})
-		asJSON = true
 	default:
 		return fmt.Errorf("unknown command %q\n%s", cmd, usage)
 	}
@@ -260,9 +251,161 @@ func run(cmd string, args []string) error {
 		fmt.Println("file:", r.File)
 		return nil
 	}
-	out, _ := json.MarshalIndent(res, "", "  ")
-	fmt.Println(string(out))
+	if asJSON {
+		out, _ := json.MarshalIndent(res, "", "  ")
+		fmt.Println(string(out))
+		return nil
+	}
+	fmt.Print(renderHuman(res))
 	return nil
+}
+
+// renderHuman พิมพ์ผลลัพธ์ให้คนอ่าน (เจ้าของ 2026-09-09: JSON ใน CLI อ่านยาก) · --json ยังได้ของเดิม
+// รู้จักรูปที่ใช้บ่อย: แผน sync, ผล push, โน้ตหนึ่งใบ · ที่เหลือพิมพ์เป็น key: value ย่อหน้าตามชั้น ข้าม response ดิบ
+func renderHuman(res any) string {
+	var b strings.Builder
+	m, ok := res.(map[string]any)
+	if !ok {
+		out, _ := json.MarshalIndent(res, "", "  ")
+		return string(out) + "\n"
+	}
+	if plan, ok := m["plan"].([]any); ok {
+		if len(plan) == 0 {
+			b.WriteString("nothing to push — every note in blm/ matches the backend\n")
+		} else {
+			fmt.Fprintf(&b, "plan — %d note(s) differ from the backend (preview, nothing sent)\n", len(plan))
+			for _, it := range plan {
+				x, _ := it.(map[string]any)
+				fmt.Fprintf(&b, "  %-22s %-8s → %-22s %6.0f bytes", str(x["name"]), str(x["mode"]), str(x["folder"]), num(x["bytes"]))
+				if x["targetExists"] == false {
+					b.WriteString("  (new on the backend)")
+				}
+				b.WriteString("\n")
+				if w, ok := x["warnings"].([]any); ok {
+					for _, l := range w {
+						fmt.Fprintf(&b, "      ! %v\n", l)
+					}
+				}
+			}
+			b.WriteString("send: blm sync --push --apply\n")
+		}
+		return b.String()
+	}
+	if pushed, ok := m["pushed"].([]any); ok {
+		if len(pushed) == 0 {
+			b.WriteString("nothing to push\n")
+		}
+		for _, it := range pushed {
+			x, _ := it.(map[string]any)
+			mark := "✔"
+			if x["verified"] != true {
+				mark = "✘"
+			}
+			fmt.Fprintf(&b, "%s %-22s %-8s → %-22s %4.0f ms", mark, str(x["name"]), str(x["mode"]), str(x["folder"]), num(x["ms"]))
+			if e := str(x["error"]); e != "" {
+				fmt.Fprintf(&b, "  %s", e)
+			}
+			b.WriteString("\n")
+		}
+		if d, ok := m["deleted"].([]any); ok && len(d) > 0 {
+			fmt.Fprintf(&b, "deleted on backend: %d\n", len(d))
+		}
+		if pr, ok := m["pull"].(map[string]any); ok {
+			b.WriteString(renderHuman(pr))
+		}
+		fmt.Fprintf(&b, "%d pushed · %v failed · %.0f ms\n", len(pushed), m["failed"], num(m["ms"]))
+		if n := str(m["next"]); n != "" {
+			b.WriteString(n + "\n")
+		}
+		return b.String()
+	}
+	if pr, ok := m["pull"].(map[string]any); ok {
+		for _, k := range []string{"refreshed", "conflicts", "upToDate"} {
+			if l, ok := pr[k].([]any); ok && len(l) > 0 {
+				fmt.Fprintf(&b, "%-10s %s\n", k+":", joinAny(l))
+			}
+		}
+		if n := str(m["next"]); n != "" {
+			b.WriteString(n + "\n")
+		}
+		return b.String()
+	}
+	if name := str(m["name"]); name != "" && m["mode"] != nil && m["ok"] != nil {
+		state := "ok"
+		if m["ok"] != true {
+			state = "failed"
+		}
+		fmt.Fprintf(&b, "%s  %s  (%s → %s, %.0f bytes)\n", state, name, str(m["mode"]), str(m["folder"]), num(m["bytes"]))
+		if chk, ok := m["check"].(map[string]any); ok && chk["needsConfirm"] == true {
+			fmt.Fprintf(&b, "needs confirm: %s\n  old %.0f → new %.0f bytes · %.0f existing line(s) disappear\n", str(chk["reason"]), num(chk["oldBytes"]), num(chk["newBytes"]), num(chk["changedLines"]))
+			if r := str(chk["removed"]); r != "" {
+				b.WriteString("  first lines that would go:\n    " + strings.ReplaceAll(r, "\n", "\n    ") + "\n")
+			}
+		}
+		if n := str(m["next"]); n != "" {
+			b.WriteString(n + "\n")
+		}
+		return b.String()
+	}
+	writeKV(&b, m, "")
+	return b.String()
+}
+
+func writeKV(b *strings.Builder, m map[string]any, indent string) {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		if k == "response" || k == "content" {
+			continue
+		}
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		switch v := m[k].(type) {
+		case map[string]any:
+			fmt.Fprintf(b, "%s%s:\n", indent, k)
+			writeKV(b, v, indent+"  ")
+		case []any:
+			if len(v) == 0 {
+				fmt.Fprintf(b, "%s%s: -\n", indent, k)
+				continue
+			}
+			fmt.Fprintf(b, "%s%s:\n", indent, k)
+			for _, it := range v {
+				if im, ok := it.(map[string]any); ok {
+					fmt.Fprintf(b, "%s  -\n", indent)
+					writeKV(b, im, indent+"    ")
+				} else {
+					fmt.Fprintf(b, "%s  - %v\n", indent, it)
+				}
+			}
+		default:
+			fmt.Fprintf(b, "%s%s: %v\n", indent, k, v)
+		}
+	}
+}
+
+func str(v any) string {
+	s, _ := v.(string)
+	return s
+}
+
+func num(v any) float64 {
+	switch n := v.(type) {
+	case float64:
+		return n
+	case int:
+		return float64(n)
+	}
+	return 0
+}
+
+func joinAny(l []any) string {
+	parts := make([]string, 0, len(l))
+	for _, x := range l {
+		parts = append(parts, fmt.Sprint(x))
+	}
+	return strings.Join(parts, ", ")
 }
 
 func nil2map(m map[string]any) map[string]any {
