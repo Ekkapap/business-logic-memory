@@ -42,7 +42,15 @@ func (s *Store) Propose(topic, heading, content, reason string) (ConflictReport,
 	if !strings.HasPrefix(incoming, "## ") {
 		incoming = "## " + heading + "\n" + incoming
 	}
-	id := s.nextConflictID(nil)
+	// ยื่นซ้ำเรื่องเดิม (topic+heading เดียวกัน) = แทนรายงานเก่าที่ยังไม่ตัดสิน ไม่งอกเป็นเลขใหม่
+	skip := map[string]bool{}
+	for _, c := range s.ListConflicts() {
+		if c.Status == "wait" && c.Kind == "proposal" && c.Topic == topic && c.Heading == heading {
+			_ = os.Remove(filepath.Join(s.Root, c.File))
+			skip[c.File] = true
+		}
+	}
+	id := s.nextConflictID(skip)
 	marker := fmt.Sprintf("<<<<<<< #%d >>>>>>>", id)
 	lines := strings.Split(base, "\n")
 	var out []string

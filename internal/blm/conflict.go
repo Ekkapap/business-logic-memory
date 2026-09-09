@@ -40,7 +40,7 @@ var (
 	conflictFileRe = regexp.MustCompile(`^\[(wait|done)\] (.+)\.md$`)
 	// ป้ายเป็นลิงก์คลิกได้ไปที่รายงาน (เจ้าของ 2026-09-09: "#1 คลิกไม่ได้") · regex ครอบทั้งรูปเก่า [Conflict: #1, #2] และรูปลิงก์ ติดกันหลายอัน
 	// รูปที่ต้องจับ: `[Conflict: #1, #2]` (เก่า) · `[Conflict: #1](url)` (เก่า) · `[Conflict: [#1](<url>), [#2](<url>)]` (ปัจจุบัน: เลขแต่ละตัวเป็นลิงก์ของตัวเอง วงเล็บนอกเห็นบนหน้าจอ)
-	conflictTagRe = regexp.MustCompile(`(\s*\[Conflict(?:: (?:\[#\d+\](?:\(<[^>]*>\)|\([^)]*\))(?:, )?|[^\]])*)?\](?:\(<[^>]*>\)|\([^)]*\))?)+`)
+	conflictTagRe = regexp.MustCompile(`(\s*\[Conflict(?:: (?:\[#\d+\](?:\(<[^>]*>\)|\([^)]*\))(?:, )?|[^\]])*)?\](?:\(<[^>]*>\)|\([^)\s]*\))?)+`)
 	checkedRe     = regexp.MustCompile(`(?m)^- \[[xX]\] `)
 )
 
@@ -285,7 +285,7 @@ func (s *Store) OpenConflict(name, topic, heading, reason string) ([]ConflictRep
 		if _, ok := noteHeads[lastHead]; !ok {
 			headOrder = append(headOrder, lastHead)
 		}
-		noteHeads[lastHead] = append(noteHeads[lastHead], tagFor(len(noteHeads[lastHead])+1, file))
+		noteHeads[lastHead] = append(noteHeads[lastHead], s.tagFor(file))
 		body := fmt.Sprintf(`---
 id: %d
 draft: %s
@@ -382,7 +382,7 @@ func (s *Store) Mark() MarkResult {
 			if _, ok := byHead[c.NoteHeading]; !ok {
 				order = append(order, c.NoteHeading)
 			}
-			byHead[c.NoteHeading] = append(byHead[c.NoteHeading], tagFor(len(byHead[c.NoteHeading])+1, filepath.Join(s.Root, c.File)))
+			byHead[c.NoteHeading] = append(byHead[c.NoteHeading], s.tagFor(filepath.Join(s.Root, c.File)))
 		}
 		for _, h := range order {
 			content = tagLine(content, h, byHead[h])
@@ -403,8 +403,8 @@ func (s *Store) Mark() MarkResult {
 }
 
 // tagFor = `[Conflict](<conflicts/[wait] report.md>)` ลิงก์ไปรายงาน relative จากโน้ตใน store (เจ้าของ 2026-09-09: ไม่ต้องมีเลข)
-func tagFor(_ int, reportPath string) string {
-	return "[Conflict](<conflicts/" + filepath.Base(reportPath) + ">)"
+func (s *Store) tagFor(reportPath string) string {
+	return "[Conflict](" + encodePath(s.rel(reportPath)) + ")"
 }
 
 // tagLine ติดป้ายที่บรรทัดหัวข้อที่ตรงกับ head (เทียบหลังตัดป้ายเดิม) — ใช้กับหัวข้อในโน้ตที่ชน
@@ -434,12 +434,12 @@ func (s *Store) refreshRuleTags() {
 	// ล้างของเดิมทั้งหมด (ป้ายที่หัวข้อแบบเก่า + [Conflict](…) หน้าลิงก์) แล้วสร้างใหม่จากรายงานที่ยัง wait
 	content := conflictTagRe.ReplaceAllString(rules.Content, "")
 	content = conflictPrefixRe.ReplaceAllString(content, "")
-	content = s.linkMemoryLines(content)
+	content = s.linkPaths(content)
 	for _, c := range s.ListConflicts() {
 		if c.Status != "wait" {
 			continue
 		}
-		link := "[Conflict](<conflicts/" + filepath.Base(c.File) + ">)"
+		link := s.tagFor(filepath.Join(s.Root, c.File))
 		if c.Draft == RulesNote {
 			if strings.Contains("\n"+content, "\n"+c.NoteHeading+"\n") || strings.Contains("\n"+content, "\n"+c.NoteHeading+" ") {
 				content = tagLine(content, c.NoteHeading, []string{link})
@@ -459,7 +459,7 @@ func (s *Store) refreshRuleTags() {
 // memoryTokenRe ดึงชื่อโน้ตจาก token ในบรรทัด memory: ทั้งรูป `name`, `name ?`, `[name.md](<path>)`
 var (
 	memoryTokenRe    = regexp.MustCompile(`\[([^\]]+)\.md\]`)
-	conflictPrefixRe = regexp.MustCompile(`\[Conflict\]\(<[^>]*>\)\s*`)
+	conflictPrefixRe = regexp.MustCompile(`\[Conflict\]\((?:<[^>]*>|[^)\s]*)\)\s*`)
 )
 
 func memoryNames(line string) []string {
@@ -476,44 +476,6 @@ func memoryNames(line string) []string {
 		names = append(names, strings.Fields(tok)[0])
 	}
 	return names
-}
-
-// noteLink ลิงก์ไปไฟล์โน้ต relative จาก store: สำเนา local ถ้ามี ไม่มีก็ mirror · ไม่พบที่ไหน = ชื่อเปล่า
-func (s *Store) noteLink(name string) string {
-	if s.Has(name) {
-		return "[" + name + ".md](<" + name + ".md>)"
-	}
-	if folder, ok := s.FindTargetFolder(name); ok {
-		if rel, err := filepath.Rel(s.Dir, filepath.Join(s.MirrorDir, folder, name+".md")); err == nil {
-			return "[" + name + ".md](<" + filepath.ToSlash(rel) + ">)"
-		}
-	}
-	return name
-}
-
-// linkMemoryLines ทุกบรรทัด `memory:` ใน blm.md → ลิงก์ไฟล์ทุกโน้ตที่เกี่ยวข้อง (เจ้าของ 2026-09-09: topic สรุปมาจากหลายไฟล์ ควรคลิกไปได้ทุกไฟล์)
-func (s *Store) linkMemoryLines(content string) string {
-	lines := strings.Split(content, "\n")
-	for i, l := range lines {
-		if !strings.HasPrefix(l, "memory:") {
-			continue
-		}
-		var out []string
-		for _, tok := range strings.Split(strings.TrimPrefix(l, "memory:"), ",") {
-			tok = strings.TrimSpace(conflictPrefixRe.ReplaceAllString(tok, ""))
-			if tok == "" {
-				continue
-			}
-			// แปลงเฉพาะ token ที่เป็นชื่อโน้ตจริง (มีใน store หรือ mirror) ข้อความอื่นคงเดิม
-			if names := memoryNames("memory: " + tok); len(names) == 1 && (s.Has(names[0]) || s.inMirror(names[0])) {
-				out = append(out, s.noteLink(names[0]))
-				continue
-			}
-			out = append(out, tok)
-		}
-		lines[i] = "memory: " + strings.Join(out, ", ")
-	}
-	return strings.Join(lines, "\n")
 }
 
 func (s *Store) inMirror(name string) bool {
@@ -548,7 +510,11 @@ func (s *Store) markMemory(content, topic, heading, note, link string) string {
 				out = append(out, tok)
 			}
 			if !found {
-				out = append(out, link+" "+s.noteLink(note))
+				nl := s.linkFor(note, true)
+				if nl == "" {
+					nl = note
+				}
+				out = append(out, link+" "+nl)
 			}
 			lines[i] = "memory: " + strings.Join(out, ", ")
 			return strings.Join(lines, "\n")

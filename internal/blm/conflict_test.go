@@ -21,7 +21,7 @@ func TestConflictWorkflow(t *testing.T) {
 		t.Fatalf("open: %v %+v", err, reports)
 	}
 	d, _ := s.Get("blm")
-	if !strings.Contains(d.Content, "## LINE Login [Conflict](<conflicts/[wait] line-login-20") || strings.Contains(d.Content, "# Authentication [Conflict") {
+	if !strings.Contains(d.Content, "## LINE Login [Conflict](.agentsroom/blm/conflicts/%5Bwait%5D%20line-login-20") || strings.Contains(d.Content, "# Authentication [Conflict") {
 		t.Fatalf("blm.md's own clash is tagged at the clashing heading only: %q", d.Content)
 	}
 	if r := s.Rules("", "agent"); len(r.Conflicts) != 1 || r.Blocks[len(r.Blocks)-1].Heading != "LINE Login" || r.Blocks[len(r.Blocks)-1].Topic != "Authentication" {
@@ -32,7 +32,7 @@ func TestConflictWorkflow(t *testing.T) {
 	if err != nil || res["ok"] != false || len(res["pending"].([]string)) != 1 {
 		t.Fatalf("pending expected: %v %v", err, res)
 	}
-	if d, _ := s.Get("blm"); !strings.Contains(d.Content, "[Conflict](<conflicts/") || strings.Contains(d.Content, "<<<<<<<") {
+	if d, _ := s.Get("blm"); !strings.Contains(d.Content, "[Conflict](.agentsroom/blm/conflicts/") || strings.Contains(d.Content, "<<<<<<<") {
 		t.Fatalf("pending draft must keep the tag and no markers: %q", d.Content)
 	}
 	// เจ้าของแก้ block B แล้วติ๊ก
@@ -100,14 +100,14 @@ func TestConflictOnOtherNoteTagsRules(t *testing.T) {
 		t.Fatalf("mark: %+v", mr)
 	}
 	rules, _ := s.Get("blm")
-	want := "memory: [Conflict](<conflicts/[wait] line-login-20"
-	if strings.Count(rules.Content, "[Conflict](<conflicts/") != 1 || !strings.Contains(rules.Content, want) || !strings.Contains(rules.Content, "[line-login.md](<line-login.md>)") || strings.Contains(rules.Content, "# Authentication [Conflict") {
+	want := "memory: [Conflict](.agentsroom/blm/conflicts/%5Bwait%5D%20line-login-20"
+	if strings.Count(rules.Content, "[Conflict](.agentsroom/blm/conflicts/") != 1 || !strings.Contains(rules.Content, want) || !strings.Contains(rules.Content, "[line-login.md](.agentsroom/blm/line-login.md)") || strings.Contains(rules.Content, "# Authentication [Conflict") {
 		t.Fatalf("blm.md must mark the note link in the memory line of Authentication › LINE Login: %q", rules.Content)
 	}
 	if !strings.Contains(rules.Content, "# Portal\n\n## LINE Login\n- other\nmemory: [Conflict]") == false && strings.Contains(rules.Content, "# Portal") && strings.Count(rules.Content, "memory:") != 2 {
 		t.Fatalf("memory lines: %q", rules.Content)
 	}
-	if d, _ := s.Get("line-login"); !strings.Contains(d.Content, "## Flow [Conflict](<conflicts/") || strings.Contains(d.Content, "# LINE Login note [Conflict") {
+	if d, _ := s.Get("line-login"); !strings.Contains(d.Content, "## Flow [Conflict](.agentsroom/blm/conflicts/") || strings.Contains(d.Content, "# LINE Login note [Conflict") {
 		t.Fatalf("the note must be tagged at the heading of the clashing region: %q", d.Content)
 	}
 	if reports[0].NoteHeading != "## Flow" {
@@ -135,6 +135,7 @@ func TestConflictTagRegexCoversAllForms(t *testing.T) {
 		"## X [Conflict: [#1](<conflicts/[wait] a b.md>), [#2](<conflicts/[wait] c.md>)]",
 		"## X [Conflict: [#1](<conflicts/[wait] a.md>)] [Conflict: #3]",
 		"## X [Conflict](<conflicts/[wait] a b.md>) [Conflict](<conflicts/[wait] c.md>)",
+		"## X [Conflict](.agentsroom/blm/conflicts/%5Bwait%5D%20a.md)",
 	} {
 		if got := conflictTagRe.ReplaceAllString(in, ""); got != "## X" {
 			t.Fatalf("%q → %q", in, got)
@@ -209,7 +210,7 @@ func TestProposeIsAConflictReportForTheOwner(t *testing.T) {
 	}
 	s.Mark()
 	rules, _ := s.Get("blm")
-	if !strings.Contains(rules.Content, "- old rule") || !strings.Contains(rules.Content, "## Login [Conflict](<conflicts/") || !strings.Contains(rules.Content, "# Auth [Conflict](<conflicts/") {
+	if !strings.Contains(rules.Content, "- old rule") || !strings.Contains(rules.Content, "## Login [Conflict](.agentsroom/blm/conflicts/") || !strings.Contains(rules.Content, "# Auth [Conflict](.agentsroom/blm/conflicts/") {
 		t.Fatalf("blm.md must be untouched but tagged: %q", rules.Content)
 	}
 	raw, _ := os.ReadFile(filepath.Join(root, r2.File))
@@ -233,5 +234,28 @@ func TestProposeIsAConflictReportForTheOwner(t *testing.T) {
 	}
 	if len(s.PlanSync(s.List())) != 1 {
 		t.Fatal("accepted proposals make blm.md dirty → planned for push")
+	}
+}
+
+
+func TestLinkPathsEverywhere(t *testing.T) {
+	s, _, root := tmpStore(t, BackendAgentsRoom)
+	_ = os.MkdirAll(filepath.Join(root, "src", "lib", "sso"), 0o755)
+	_ = os.WriteFile(filepath.Join(root, "src", "lib", "db.ts"), []byte("x"), 0o644)
+	_ = os.WriteFile(filepath.Join(root, "src", "lib", "sso", "a.ts"), []byte("x"), 0o644)
+	mirrorNote(t, root, "line-login", "# L\n", "2026-09-01T00:00:00Z")
+	in := "## Gate\n- ดู `src/lib/db.ts` แล้ว session ไม่แตะ (src/lib/sso/*).\nmemory: line-login, other, [old.md](<../memory/features/old.md>)\ncode: src/lib/db.ts, src/lib/sso/*, missing/file.ts\n"
+	got := s.linkPaths(in)
+	for _, want := range []string{
+		"- ดู `[db.ts](src/lib/db.ts)` แล้ว session ไม่แตะ ([src/lib/sso/](src/lib/sso/)).",
+		"memory: [line-login.md](.agentsroom/memory/features/line-login.md), other, [old.md](.agentsroom/memory/features/old.md)",
+		"code: [db.ts](src/lib/db.ts), [src/lib/sso/](src/lib/sso/), missing/file.ts",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q in\n%s", want, got)
+		}
+	}
+	if s.linkPaths(got) != got {
+		t.Fatal("linkPaths must be idempotent")
 	}
 }
