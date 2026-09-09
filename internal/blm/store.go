@@ -593,3 +593,47 @@ func contextAround(content, needle string, lines int) string {
 	}
 	return strings.Join(out, "\n")
 }
+
+// History รายชื่อไฟล์ใน history/ ของโน้ต (ใหม่สุดก่อน) — ไว้เลือกกู้ด้วย Restore
+func (s *Store) History(name string) []string {
+	entries, _ := os.ReadDir(filepath.Join(s.Dir, "history"))
+	var out []string
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), name+"-[") && strings.HasSuffix(e.Name(), ".md") {
+			out = append(out, e.Name())
+		}
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(out)))
+	return out
+}
+
+// Restore กู้โน้ตใน blm/ จากไฟล์ใน history/ (เจ้าของสั่ง 2026-09-09 หลัง blm_save ทับ blm-plugin ทั้งก้อน)
+// ของปัจจุบันถูกเก็บลง history ก่อนเสมอ (action restore) จึงย้อนกลับได้อีก · historyFile รับทั้งชื่อไฟล์และ path
+func (s *Store) Restore(historyFile, name string) (Note, error) {
+	if historyFile == "" || name == "" {
+		return Note{}, fmt.Errorf("restore: history file and note name are required")
+	}
+	p := filepath.Join(s.Dir, "history", filepath.Base(historyFile))
+	raw, err := os.ReadFile(p)
+	if err != nil {
+		return Note{}, fmt.Errorf("restore: %v (blm restore <history-file> <note> — list with blm restore <note>)", err)
+	}
+	dest, err := s.file(name)
+	if err != nil {
+		return Note{}, err
+	}
+	if s.Has(name) {
+		s.snapshot(name, "restore")
+	}
+	n := parseNote(name, string(raw))
+	n.Name = name
+	if n.Target == "" {
+		n.Target = name
+	}
+	if n.Mode != "replace" {
+		n.Mode = "append"
+	}
+	n.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	_ = os.MkdirAll(s.Dir, 0o755)
+	return n, os.WriteFile(dest, []byte(serializeNote(n)), 0o644)
+}

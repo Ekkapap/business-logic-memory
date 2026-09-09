@@ -374,3 +374,24 @@ func TestRulesAreLocalFirst(t *testing.T) {
 		t.Fatalf("pull refresh: %+v %q", pr, n.Content)
 	}
 }
+
+func TestRestoreFromHistory(t *testing.T) {
+	s, _, _ := tmpStore(t, BackendNone)
+	if _, err := s.Save(Input{Name: "n", Content: "full body v1", HasContent: true, Mode: "replace", Description: "d"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Save(Input{Name: "n", Content: "oops one paragraph", HasContent: true, Mode: "append"}); err != nil {
+		t.Fatal(err)
+	}
+	h := s.History("n")
+	if len(h) != 1 {
+		t.Fatalf("history: %v", h)
+	}
+	n, err := s.Restore(h[0], "n")
+	if err != nil || strings.TrimSpace(n.Content) != "full body v1" || n.Mode != "replace" {
+		t.Fatalf("restore: %v %+v", err, n)
+	}
+	if got := s.History("n"); len(got) != 2 {
+		t.Fatalf("the overwritten version must be snapshotted too: %v", got)
+	}
+}

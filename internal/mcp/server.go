@@ -74,6 +74,8 @@ func tools(c blm.Config) []tool {
 			obj(map[string]any{"query": str("word to look up (symbol or path); omit = summary"), "path": str("sub path to build from (omit = whole project)"), "rebuild": map[string]any{"type": "boolean", "description": "rebuild graph.json even if cached"}, "html": map[string]any{"type": "boolean", "description": "also write <store>/graph.html — an interactive force graph to open in a browser"}, "limit": map[string]any{"type": "number"}})},
 		{"blm_conflict", "Two uses, one report format the OWNER decides on (Current/Incoming, tick or blm conflicts -i). (1) Real clash: a blm_diff conflict you cannot decide — pass name (the note); blm writes one report per overlapping region and marks blm.md at the topic/subtopic the note belongs to plus the note heading. (2) Proposal: you want to change blm.md itself (during /blm_init or when a rule should change) — pass content (the whole proposed block for topic › heading; existing or new subtopic), name may be omitted; Current = the block as it is now, Incoming = your content; blm.md stays untouched until resolved, then it is pushed. Write reason/content in the owner's language (Thai here). Several reports may wait at once.",
 			obj(map[string]any{"name": noteProps["name"], "topic": str("main topic (e.g. Authentication)"), "heading": str("subtopic heading exactly as in blm.md (e.g. LINE Login (delegated MFA))"), "reason": str("why you could not decide — what each side claims"), "content": str("proposal mode: the whole proposed block (rules, memory:/code:/verify:/updated_at lines; leading '## heading' optional)")}, "topic", "heading", "reason")},
+		{"blm_restore", "Restore a note in blm/ from a file in history/ (every save/update/patch/delete snapshots the previous version there). Without history: list the history files of that note, newest first. The current version is snapshotted before it is overwritten.",
+			obj(map[string]any{"name": noteProps["name"], "history": str("history file name, e.g. blm-plugin-[update]-20260909-070159.md (omit = list)")}, "name")},
 		{"blm_conflicts", "List conflict reports: status wait/done (from the file name), topic › subtopic, which block is ticked — returns `terminal` ready to print. With id: the report itself as terminal text (Current = local draft, Incoming = cloud).", obj(map[string]any{"id": num("report id to show (omit = list)"), "all": boolean("include done reports in the list (default: waiting only)")})},
 		{"blm_resolve", "After the owner ticked one block per report (or with keep): reassemble the draft from the kept 3-way result using the chosen (possibly edited) blocks, rename the reports to [done], remove the [Conflict] marks, advance the base to the cloud version, then push the note so the backend equals the local copy. Refuses while any region is unticked or has both boxes ticked.",
 			obj(map[string]any{"name": noteProps["name"], "keep": enum("decide from the terminal without ticking the file: current = local draft (B) · incoming = cloud (A); applies to every open report of this note", "current", "incoming"), "push": boolean("after a complete resolve push this note to the backend at once so the cloud equals the local copy (default true)"), "author": str("agent display name for the push"), "role": str("role id for the push")}, "name")},
@@ -228,6 +230,13 @@ func (s *Server) Call(name string, a map[string]any) (any, error) {
 			return nil, err
 		}
 		return map[string]any{"ok": true, "reports": reports, "next": "tell the owner which files to open; do not push this draft until blm_resolve"}, nil
+	case "blm_restore":
+		h, _ := a["history"].(string)
+		if h == "" {
+			return map[string]any{"name": in.Name, "history": s.store.History(in.Name), "next": "blm_restore {name, history:<one of these>}"}, nil
+		}
+		n, err := s.store.Restore(h, in.Name)
+		return brief(n, err), err
 	case "blm_conflicts":
 		list := s.store.ListConflicts()
 		if id, ok := a["id"].(float64); ok && id > 0 {

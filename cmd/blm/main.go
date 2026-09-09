@@ -30,6 +30,7 @@ const usage = `blm <command> [args]
   edit <target> <find> <replace>  edit lines of a backend note locally (mirror → draft), push later with sync
   diff <name> · merge <name> mine|cloud|content [file]   see what changed on the cloud vs your draft, then resolve
   conflicts [<id>] [-i] [--all]   waiting conflicts, one per block with its report path · <id> prints the report · -i pick → read → decide (c/i) · --all includes done
+  restore <history-file> <note>   put a history/ snapshot back as the note (blm restore <note> lists snapshots)
   resolve <name> [--keep current|incoming] [--no-push]  apply the decision, then push the note so the backend equals local (--no-push to skip)
   get <name> · save <name> <file|-> [--target t] [--mode m] [--folder f] [--description d] · update … · patch <name> <find> <replace> · delete <name>
   path                            add the blm folder to the user's PATH (prints the command if it cannot)
@@ -201,6 +202,17 @@ func run(cmd string, args []string) error {
 			a["id"] = float64(id)
 		}
 		res, err = srv.Call("blm_conflicts", a)
+	case "restore":
+		// blm restore <history-file> <note> · blm restore <note> = list history files (เจ้าของกำหนดรูปคำสั่ง 2026-09-09)
+		switch len(rest) {
+		case 1:
+			res, err = srv.Call("blm_restore", map[string]any{"name": rest[0]})
+		case 2:
+			res, err = srv.Call("blm_restore", map[string]any{"history": rest[0], "name": rest[1]})
+		default:
+			return fmt.Errorf("blm restore <history-file> <note>   (blm restore <note> lists its history)")
+		}
+		asJSON = true
 	case "resolve":
 		if len(rest) < 1 {
 			return fmt.Errorf("blm resolve <note> [--keep current|incoming]")
