@@ -25,7 +25,7 @@ argument-hint: [path ย่อยที่จะวิเคราะห์ — 
    <กฎเป็นประโยคบอกเล่า 1–5 บรรทัด>
    ```
 5. ประกอบไฟล์: frontmatter (`target: blm`, `mode: replace`, description "Contains …") → `# วิธีอ่าน` → `## Main Business` ตาราง (หัวข้อ | ความหมาย | จำนวนกฎ) → `# <หัวข้อหลัก>` แต่ละหัวข้อกับ block ย่อย → `# ข้อสงสัย` (สิ่งที่เจ้าของยังไม่ตอบ)
-   บันทึกด้วย `blm_save { name: "blm", target: "blm", mode: "replace", description, folder: "global/conventions", content }`
+   ไฟล์ใหม่: `blm_create { name: "blm", target: "blm", mode: "replace", description, folder: "global/conventions", content }` · มี blm.md อยู่แล้ว: เสนอทีละ block ด้วย `blm_conflict {topic, heading, reason, content}` ให้เจ้าของตัดสิน ห้ามเขียนทับทั้งไฟล์
    - backend none/obsidian: ไฟล์นี้คือของจริงทันที · agentsroom/custom: เป็นร่าง บอกเจ้าของว่าสั่ง "update memory" เมื่อพร้อม แล้ว `blm_sync`
 6. ปิดด้วย `blm_status` แล้วบอกจำนวนหัวข้อหลัก/ย่อย และวิธีใช้ต่อ: `/blm` ตอนเริ่มวัน · `blm status` ใน terminal
 

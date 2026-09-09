@@ -58,14 +58,11 @@ func tools(c blm.Config) []tool {
 		{"blm", "Read the project's current business rules (blm.md — the single source of truth, changed only by the owner). No query = whole file · a word/heading = grep, returns the whole block of every matching subtopic with its main topic. Also reports which blocks changed since the last read and whether temp drafts are waiting for confirmation. Call it yourself whenever memory conflicts with code.",
 			obj(map[string]any{"query": str("word or heading to search (omit = whole file)"), "trigger": enum("who asked: user (via /blm) or agent on its own (default) — recorded in stats", "user", "agent")})},
 		{"blm_get", "Read one temp note in full", obj(map[string]any{"name": noteProps["name"]}, "name")},
-		{"blm_save", "Create/overwrite a whole temp note (like memory_save mode replace). Use it to jot what should reach the memory backend at the end of the session instead of calling memory_save mid-task", obj(noteProps, "name", "content")},
-		{"blm_update", "Append to an existing temp note (like memory_save mode append); metadata can be changed at the same time", obj(noteProps, "name", "content")},
-		{"blm_patch", "Replace an exact string in a temp note (must match exactly once)", obj(map[string]any{"name": noteProps["name"], "find": str(""), "replace": str("")}, "name", "find", "replace")},
+		{"blm_create", "Create a NEW note in blm/ (refuses if the name exists). Jot what should reach the memory backend at the end of the session here instead of calling memory_save mid-task. mode = how it lands on push: append (a section for an existing backend note) or replace (a whole new note, description required).", obj(noteProps, "name", "content")},
+		{"blm_append", "Append a section to a note (like memory_save mode append). If the note is not in blm/ yet but exists on the backend, it is checked out first. Nothing else in the note changes.", obj(noteProps, "name", "content")},
+		{"blm_patch", "Find/replace inside a note: `find` must match exactly once. If the note is not in blm/ yet but exists on the backend, it is checked out first — use this instead of memory_get + memory_save to change a few lines. Returns metadata only.", obj(map[string]any{"name": noteProps["name"], "find": str(""), "replace": str("")}, "name", "find", "replace")},
+		{"blm_replace", "Overwrite a WHOLE note in blm/ on purpose (it must exist; the previous version goes to history/). If the new content differs a lot from the current one (size or lines > 30%), nothing is written and you get needsConfirm with the numbers and the first lines that would disappear — call again with confirm:true only if that is intended. Rarely needed — prefer blm_patch/blm_append.", obj(withConfirm(noteProps), "name", "content")},
 		{"blm_delete", "Delete a temp note (the previous version is snapshotted to history/)", obj(map[string]any{"name": noteProps["name"]}, "name")},
-		{"blm_edit", "Edit a few lines of an EXISTING backend note without reading it: blm loads the note from the local mirror (or the pending draft), replaces `find` with `replace` (must match exactly once) and stores the whole result as a replace-draft in temp. Returns only 3 lines of context around the change. Push later with blm_sync. Use this instead of memory_get + memory_save.",
-			obj(map[string]any{"target": str("backend note name (e.g. line-login-linking)"), "find": str("exact text to replace (must occur once)"), "replace": str("new text")}, "target", "find", "replace")},
-		{"blm_scan", "Survey the repo before /blm_init: file/byte/token totals with .gitignore + .socraticodeignore + .ignorememory applied, per-top-dir stats, memory note count, and SUB-PROJECTS (folders with their own go.mod/package.json/PLANNING.md/… — propose each as its own main topic). Generic: no project names hard-coded. Warns when the whole tree exceeds the token budget.",
-			obj(map[string]any{"path": str("sub path to survey (omit = whole project)"), "tokenWarn": map[string]any{"type": "number", "description": "warn above this many tokens (default 200000)"}})},
 		{"blm_diff", "Compare a replace-draft with the cloud note it was taken from: did the cloud change since (cloudChanged), which lines changed on each side (diffCloud / diffMine, a few lines each), and whether the regions overlap. Only the changed lines leave blm — never whole notes. Run before pushing a draft that has waited a while, or when blm_sync reports a conflict.",
 			obj(map[string]any{"name": noteProps["name"]}, "name")},
 		{"blm_merge", "Resolve a conflicting draft after blm_diff. keep=mine: re-apply the draft's changes on top of the current cloud version (3-way, refuses on overlapping regions) · keep=cloud: drop the draft (snapshot to history) · keep=content: store the text you merged by hand. Owner decides; the replaced version always lands in history/.",
@@ -161,27 +158,29 @@ func (s *Server) Call(name string, a map[string]any) (any, error) {
 	case "blm_get":
 		return s.store.Get(in.Name)
 	// เขียน/แก้: คืนแค่ metadata + ขนาด ไม่คืนเนื้อโน้ต (2026-09-09: blm_patch คืนทั้งก้อน 7 ครั้ง = 170 KB เข้า context โดยไม่จำเป็น)
-	case "blm_save":
-		n, err := s.store.Save(in)
+	case "blm_create":
+		n, err := s.store.Create(in)
 		return brief(n, err), err
-	case "blm_update":
-		n, err := s.store.Update(in)
+	case "blm_append":
+		n, err := s.store.Append(in)
 		return brief(n, err), err
 	case "blm_patch":
 		n, err := s.store.Patch(in.Name, getStr(a, "find"), getStr(a, "replace"))
 		return brief(n, err), err
-	case "blm_delete":
-		return map[string]any{"ok": true}, s.store.Delete(in.Name)
-	case "blm_edit":
-		n, ctx, err := s.store.Edit(getStr(a, "target"), getStr(a, "find"), getStr(a, "replace"))
+	case "blm_replace":
+		confirm, _ := a["confirm"].(bool)
+		n, chk, err := s.store.Replace(in, confirm)
 		if err != nil {
 			return nil, err
 		}
-		return map[string]any{"ok": true, "draft": n.Name, "mode": n.Mode, "folder": n.Folder, "bytes": len(n.Content), "context": ctx, "next": "push with blm_sync {apply:true} when the owner says update memory"}, nil
-	case "blm_scan":
-		tw, _ := a["tokenWarn"].(float64)
-		r := blm.ScanRepo(s.root, getStr(a, "path"), int64(tw))
-		return map[string]any{"scan": r, "terminal": blm.RenderScan(r)}, nil
+		if chk != nil && chk.NeedsConfirm && !confirm {
+			return map[string]any{"ok": false, "needsConfirm": true, "check": chk, "next": "the new content differs a lot from the current note — re-read what you are about to drop (check.removed), then call blm_replace again with confirm:true only if that is intended; otherwise use blm_patch/blm_append"}, nil
+		}
+		out := brief(n, nil)
+		out["check"] = chk
+		return out, nil
+	case "blm_delete":
+		return map[string]any{"ok": true}, s.store.Delete(in.Name)
 	case "blm_diff":
 		return s.store.Diff(in.Name)
 	case "blm_merge":
@@ -476,6 +475,15 @@ func (s *Server) sync(direction string, done, names []string, apply bool, author
 		return map[string]any{"plan": briefs, "parallel": true, "next": "preview only — run blm_sync {apply:true, author, role} to push; pass full:true only if you must push by hand"}, nil
 	}
 	return map[string]any{"plan": plan, "parallel": true, "next": next}, nil
+}
+
+func withConfirm(props map[string]any) map[string]any {
+	out := map[string]any{}
+	for k, v := range props {
+		out[k] = v
+	}
+	out["confirm"] = boolean("true = you have seen the needsConfirm numbers and really mean to overwrite")
+	return out
 }
 
 func brief(n blm.Note, err error) map[string]any {

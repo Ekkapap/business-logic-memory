@@ -10,7 +10,7 @@ import (
 func TestConflictWorkflow(t *testing.T) {
 	s, _, root := tmpStore(t, BackendAgentsRoom)
 	p := mirrorNote(t, root, "blm", "# Authentication\n\n## LINE Login\n- rule one\n- rule two\nmemory: x\n", "2026-09-01T00:00:00Z")
-	if _, _, err := s.Edit("blm", "- rule two", "- rule two (mine)"); err != nil {
+	if _, err := s.Patch("blm", "- rule two", "- rule two (mine)"); err != nil {
 		t.Fatal(err)
 	}
 	// cloud แก้บรรทัดเดียวกัน → ชน
@@ -70,7 +70,7 @@ func TestConflictWorkflow(t *testing.T) {
 		t.Fatal("merged snapshot must be removed after resolve")
 	}
 	// ไม่มีรายงานค้าง → conflict ใหม่ได้เลข #1 อีกครั้ง (เลข = ลำดับที่ค้างอยู่ ไม่ใช่เลขรัน)
-	if _, _, err := s.Edit("blm", "- rule two (owner edited)", "- rule two (again)"); err != nil {
+	if _, err := s.Patch("blm", "- rule two (owner edited)", "- rule two (again)"); err != nil {
 		t.Fatal(err)
 	}
 	_ = os.WriteFile(p, []byte("---\nname: \"blm\"\nfolder: \"features\"\nupdatedAt: \"2026-09-03T00:00:00Z\"\n---\n\n# Authentication\n\n## LINE Login\n- rule one\n- rule two (cloud again)\nmemory: x\n"), 0o644)
@@ -84,7 +84,7 @@ func TestConflictOnOtherNoteTagsRules(t *testing.T) {
 	s, _, root := tmpStore(t, BackendAgentsRoom)
 	mirrorNote(t, root, "blm", "# Authentication\n\n## LINE Login\n- rule one\nmemory: line-login, other-note\n\n# Portal\n\n## LINE Login\n- other\nmemory: line-login\n", "2026-09-01T00:00:00Z")
 	p := mirrorNote(t, root, "line-login", "# LINE Login note\n\n## Flow\n- step a\n- step b\n", "2026-09-01T00:00:00Z")
-	if _, _, err := s.Edit("line-login", "- step b", "- step b (mine)"); err != nil {
+	if _, err := s.Patch("line-login", "- step b", "- step b (mine)"); err != nil {
 		t.Fatal(err)
 	}
 	_ = os.WriteFile(p, []byte("---\nname: \"line-login\"\nfolder: \"features\"\nupdatedAt: \"2026-09-02T00:00:00Z\"\n---\n\n# LINE Login note\n\n## Flow\n- step a\n- step b (cloud)\n"), 0o644)
@@ -158,7 +158,7 @@ func TestKeepDecidesFromTerminal(t *testing.T) {
 	s, _, root := tmpStore(t, BackendAgentsRoom)
 	mirrorNote(t, root, "blm", "# Authentication\n\n## LINE Login\n- rule one\nmemory: line-login\n", "2026-09-01T00:00:00Z")
 	p := mirrorNote(t, root, "line-login", "# LINE Login note\n\n## Flow\n- step a\n- step b\n", "2026-09-01T00:00:00Z")
-	if _, _, err := s.Edit("line-login", "- step b", "- step b (mine)"); err != nil {
+	if _, err := s.Patch("line-login", "- step b", "- step b (mine)"); err != nil {
 		t.Fatal(err)
 	}
 	_ = os.WriteFile(p, []byte("---\nname: \"line-login\"\nfolder: \"features\"\nupdatedAt: \"2026-09-02T00:00:00Z\"\n---\n\n# LINE Login note\n\n## Flow\n- step a\n- step b (cloud)\n"), 0o644)

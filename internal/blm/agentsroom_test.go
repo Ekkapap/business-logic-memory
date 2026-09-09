@@ -177,25 +177,22 @@ func TestEditFromMirror(t *testing.T) {
 	dir := filepath.Join(root, ".agentsroom", "memory", "features")
 	_ = os.MkdirAll(dir, 0o755)
 	_ = os.WriteFile(filepath.Join(dir, "line-login.md"), []byte("---\nname: \"line-login\"\ndescription: \"Contains LINE\"\nfolder: \"features\"\ntags: [\"auth\"]\n---\n\n# LINE\n- rule one\n- rule two\n- rule three\n"), 0o644)
-	n, ctx, err := s.Edit("line-login", "rule two", "rule 2 (changed)")
+	n, err := s.Patch("line-login", "rule two", "rule 2 (changed)")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if n.Mode != "replace" || n.Folder != "features" || n.Description != "Contains LINE" || len(n.Tags) != 1 || !strings.Contains(n.Content, "rule 2 (changed)") || strings.Contains(n.Content, "rule two") {
 		t.Fatalf("draft wrong: %+v", n)
 	}
-	if !strings.Contains(ctx, "rule 2 (changed)") || strings.Count(ctx, "\n") > 6 {
-		t.Fatalf("context must be a few lines: %q", ctx)
-	}
 	// แก้ครั้งที่สองต้องต่อจากร่างเดิม ไม่ใช่ mirror
-	n2, _, err := s.Edit("line-login", "rule one", "rule 1")
+	n2, err := s.Patch("line-login", "rule one", "rule 1")
 	if err != nil || !strings.Contains(n2.Content, "rule 2 (changed)") || !strings.Contains(n2.Content, "rule 1") {
 		t.Fatalf("second edit must build on the draft: %v %q", err, n2.Content)
 	}
-	if _, _, err := s.Edit("line-login", "nope", "x"); err == nil {
+	if _, err := s.Patch("line-login", "nope", "x"); err == nil {
 		t.Fatal("no match must error")
 	}
-	if _, _, err := s.Edit("unknown-note", "a", "b"); err == nil {
+	if _, err := s.Patch("unknown-note", "a", "b"); err == nil {
 		t.Fatal("unknown target must error")
 	}
 	plan := s.PlanSync(s.List())

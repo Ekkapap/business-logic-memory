@@ -395,3 +395,28 @@ func TestRestoreFromHistory(t *testing.T) {
 		t.Fatalf("the overwritten version must be snapshotted too: %v", got)
 	}
 }
+
+func TestReplaceAsksForConfirmationOnBigChanges(t *testing.T) {
+	s, _, _ := tmpStore(t, BackendNone)
+	body := "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10\n"
+	if _, err := s.Create(Input{Name: "n", Content: body, HasContent: true, Mode: "replace", Description: "d"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Create(Input{Name: "n", Content: "x", HasContent: true}); err == nil {
+		t.Fatal("create must refuse an existing name")
+	}
+	n, chk, err := s.Replace(Input{Name: "n", Content: "only this", HasContent: true}, false)
+	if err != nil || chk == nil || !chk.NeedsConfirm || n.Name != "" || !strings.Contains(chk.Removed, "line 1") {
+		t.Fatalf("big replace must ask first: %+v %+v %v", n, chk, err)
+	}
+	if got, _ := s.Get("n"); !strings.Contains(got.Content, "line 10") {
+		t.Fatal("nothing may be written before confirm")
+	}
+	if _, _, err := s.Replace(Input{Name: "n", Content: "only this", HasContent: true}, true); err != nil {
+		t.Fatal(err)
+	}
+	// เปลี่ยนเล็กน้อยไม่ต้องยืนยัน
+	if _, chk, err := s.Replace(Input{Name: "n", Content: "only this!", HasContent: true}, false); err != nil || chk.NeedsConfirm {
+		t.Fatalf("small change must pass: %+v %v", chk, err)
+	}
+}

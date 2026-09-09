@@ -27,12 +27,11 @@ const usage = `blm <command> [args]
   report [name] [--json]          latest report
   tools <action> [--docker] [tool] status|get|install|start|stop|restart|gen-graph|help  (socraticode|obsidian|graphify)
   sync --push|--pull [--apply] [--parallel] [--author a] [--role r] [--delete a,b]   plan, or with --apply push to AgentsRoom one by one (--parallel = all at once)
-  edit <target> <find> <replace>  edit lines of a backend note locally (mirror → draft), push later with sync
   diff <name> · merge <name> mine|cloud|content [file]   see what changed on the cloud vs your draft, then resolve
   conflicts [<id>] [-i] [--all]   waiting conflicts, one per block with its report path · <id> prints the report · -i pick → read → decide (c/i) · --all includes done
   restore <history-file> <note>   put a history/ snapshot back as the note (blm restore <note> lists snapshots)
   resolve <name> [--keep current|incoming] [--no-push]  apply the decision, then push the note so the backend equals local (--no-push to skip)
-  get <name> · save <name> <file|-> [--target t] [--mode m] [--folder f] [--description d] · update … · patch <name> <find> <replace> · delete <name>
+  get <name> · create <name> <file|-> [--target t] [--mode m] [--folder f] [--description d] · append <name> <file|-> · patch <name> <find> <replace> · replace <name> <file|-> [--confirm] · delete <name>
   path                            add the blm folder to the user's PATH (prints the command if it cannot)
   guard                           PreToolUse hook: reads JSON on stdin, denies Bash writes inside the store
   mcp                             MCP server (stdio) — the Claude Code plugin runs this
@@ -153,7 +152,7 @@ func run(cmd string, args []string) error {
 		}
 		res, err = srv.Call("blm_"+cmd, map[string]any{"name": rest[0]})
 		asJSON = true
-	case "save", "update":
+	case "create", "append", "replace":
 		if len(rest) < 2 {
 			return fmt.Errorf("blm %s <name> <file|-> [--target t] [--mode m] [--folder f] [--description d]", cmd)
 		}
@@ -166,6 +165,9 @@ func run(cmd string, args []string) error {
 			if v := flags[k]; v != "" {
 				a[k] = v
 			}
+		}
+		if flags["confirm"] != "" {
+			a["confirm"] = true
 		}
 		res, err = srv.Call("blm_"+cmd, a)
 		asJSON = true
@@ -225,12 +227,6 @@ func run(cmd string, args []string) error {
 			a["push"] = false
 		}
 		res, err = srv.Call("blm_resolve", a)
-		asJSON = true
-	case "edit":
-		if len(rest) < 3 {
-			return fmt.Errorf("blm edit <target> <find> <replace>")
-		}
-		res, err = srv.Call("blm_edit", map[string]any{"target": rest[0], "find": rest[1], "replace": rest[2]})
 		asJSON = true
 	case "patch":
 		if len(rest) < 3 {
@@ -295,7 +291,7 @@ func splitFlags(args []string) (map[string]string, []string) {
 			continue
 		}
 		switch k {
-		case "json", "push", "pull", "docker", "apply", "parallel", "rebuild", "html", "i", "interactive", "all", "no-push":
+		case "json", "push", "pull", "docker", "apply", "parallel", "rebuild", "html", "i", "interactive", "all", "no-push", "confirm":
 			flags[k] = "1"
 		default:
 			if i+1 < len(args) {

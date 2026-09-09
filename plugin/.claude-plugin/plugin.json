@@ -1,7 +1,7 @@
 {
   "name": "blm",
   "version": "2.0.0",
-  "description": "business-logic-memory: session temp notes (blm_save/update/patch) + one business-logic source of truth (blm.md) with self-test reports, stats, history and a write lock. Needs the `blm` binary on PATH (install: https://github.com/Ekkapap/business-logic-memory).",
+  "description": "business-logic-memory: session temp notes (blm_create/append/patch/replace) + one business-logic source of truth (blm.md) with self-test reports, stats, history and a write lock. Needs the `blm` binary on PATH (install: https://github.com/Ekkapap/business-logic-memory).",
   "author": { "name": "Ekkapap Sricharoen" },
   "homepage": "https://github.com/Ekkapap/business-logic-memory",
   "mcpServers": {

@@ -181,6 +181,86 @@ func (s *Store) save(in Input, action string) (Note, error) {
 }
 
 // Update ต่อท้าย body (เหมือน memory_save mode append) — ต้องมีโน้ตอยู่ก่อน
+// Create สร้างโน้ตใหม่ใน blm/ เท่านั้น — มีอยู่แล้ว = ปฏิเสธ (เจ้าของ 2026-09-09: ชื่อต้องตรง action · save เคยทับ blm-plugin ทั้งก้อน)
+func (s *Store) Create(in Input) (Note, error) {
+	if s.Has(in.Name) {
+		return Note{}, fmt.Errorf("create %q: already exists in blm/ — blm_append to add, blm_patch to change lines, blm_replace to overwrite on purpose", in.Name)
+	}
+	return s.save(in, "create")
+}
+
+// ReplaceCheck = ข้อมูลให้ agent คิดอีกรอบก่อนทับทั้งโน้ต (เจ้าของ 2026-09-09: ต่างกันมากทั้งขนาดและเนื้อหา → ต้อง confirm)
+type ReplaceCheck struct {
+	NeedsConfirm bool   `json:"needsConfirm"`
+	OldBytes     int    `json:"oldBytes"`
+	NewBytes     int    `json:"newBytes"`
+	OldLines     int    `json:"oldLines"`
+	NewLines     int    `json:"newLines"`
+	ChangedLines int    `json:"changedLines"`
+	Removed      string `json:"removed,omitempty"` // บรรทัดแรก ๆ ที่จะหาย (ให้เห็นว่ากำลังทิ้งอะไร)
+	Reason       string `json:"reason,omitempty"`
+}
+
+// Replace ทับทั้งโน้ตโดยตั้งใจ — ต้องมีอยู่แล้ว (ของเดิมลง history/)
+// confirm=false: ถ้าเนื้อหาใหม่ต่างจากเดิมมาก (ขนาดต่าง >30% หรือบรรทัดเปลี่ยน >30%) ไม่เขียน คืน ReplaceCheck ให้ agent ยืนยันด้วย confirm=true
+func (s *Store) Replace(in Input, confirm bool) (Note, *ReplaceCheck, error) {
+	if !s.Has(in.Name) {
+		return Note{}, nil, fmt.Errorf("replace %q: not in blm/ — blm_create it first", in.Name)
+	}
+	if !in.HasContent {
+		return Note{}, nil, fmt.Errorf("replace %q: content is required", in.Name)
+	}
+	prev, _ := s.Get(in.Name)
+	chk := replaceCheck(prev.Content, in.Content)
+	if chk.NeedsConfirm && !confirm {
+		return Note{}, &chk, nil
+	}
+	n, err := s.save(in, "replace")
+	return n, &chk, err
+}
+
+func replaceCheck(oldC, newC string) ReplaceCheck {
+	c := ReplaceCheck{OldBytes: len(oldC), NewBytes: len(newC), OldLines: len(strings.Split(strings.TrimSpace(oldC), "\n")), NewLines: len(strings.Split(strings.TrimSpace(newC), "\n"))}
+	diff, _ := LineDiff(oldC, newC)
+	var removed []string
+	gone := 0 // บรรทัดเดิมที่จะหาย — ตัวชี้ว่ากำลังทิ้งอะไร (บรรทัดที่เพิ่มไม่นับ)
+	for _, l := range strings.Split(diff, "\n") {
+		if strings.HasPrefix(l, "- ") {
+			gone++
+			if len(removed) < 5 {
+				removed = append(removed, strings.TrimPrefix(l, "- "))
+			}
+		}
+	}
+	c.ChangedLines = gone
+	c.Removed = strings.Join(removed, "\n")
+	sizeDelta := c.NewBytes - c.OldBytes
+	if sizeDelta < 0 {
+		sizeDelta = -sizeDelta
+	}
+	base := c.OldBytes
+	if base == 0 {
+		base = 1
+	}
+	switch {
+	case sizeDelta*100/base > 30:
+		c.NeedsConfirm, c.Reason = true, fmt.Sprintf("size changes by %d%% (%d → %d bytes)", sizeDelta*100/base, c.OldBytes, c.NewBytes)
+	case c.OldLines >= 5 && gone*100/c.OldLines > 30: // โน้ตสั้นมากใช้เกณฑ์ขนาดอย่างเดียว ไม่งั้นแก้คำเดียวก็ 100%
+		c.NeedsConfirm, c.Reason = true, fmt.Sprintf("%d of %d existing lines disappear", gone, c.OldLines)
+	}
+	return c
+}
+
+// Append ต่อท้ายโน้ต · ยังไม่อยู่ใน blm/ แต่มีบน mirror → ดึงมาก่อน (Checkout) แล้วต่อ
+func (s *Store) Append(in Input) (Note, error) {
+	if !s.Has(in.Name) {
+		if _, err := s.Checkout(in.Name); err != nil {
+			return Note{}, fmt.Errorf("append %q: not in blm/ and not in mirror — blm_create it", in.Name)
+		}
+	}
+	return s.Update(in)
+}
+
 func (s *Store) Update(in Input) (Note, error) {
 	prev, err := s.Get(in.Name)
 	if err != nil {
@@ -197,7 +277,13 @@ func (s *Store) Update(in Input) (Note, error) {
 }
 
 // Patch แทนที่ข้อความตรงตัว ต้องเจอพอดีหนึ่งครั้ง
+// Patch ค้นหา/แทนที่ (พบพอดี 1) · ยังไม่อยู่ใน blm/ แต่มีบน mirror → ดึงมาก่อน (เดิมคือ Edit)
 func (s *Store) Patch(name, find, replace string) (Note, error) {
+	if !s.Has(name) {
+		if _, err := s.Checkout(name); err != nil {
+			return Note{}, fmt.Errorf("patch %q: not in blm/ and not in mirror — blm_create it", name)
+		}
+	}
 	prev, err := s.Get(name)
 	if err != nil {
 		return Note{}, err
@@ -269,7 +355,7 @@ type SyncItem struct {
 	TargetExists bool     `json:"targetExists"`
 	Warnings     []string `json:"warnings"`
 	Command      string   `json:"command,omitempty"`
-	// Base = updatedAt ของ cloud ตอนสร้างร่าง (เฉพาะ replace ที่มาจาก blm_edit) ใช้ตรวจ conflict ก่อน push
+	// Base = updatedAt ของ cloud ตอนสร้างร่าง (โน้ตที่ checkout จาก mirror) ใช้ตรวจ conflict ก่อน push
 	Base string `json:"base,omitempty"`
 }
 
@@ -439,36 +525,6 @@ func parseNote(name, raw string) Note {
 	return n
 }
 
-// Edit แก้บางบรรทัดของโน้ตปลายทางแบบ local (เจ้าของ 2026-09-09: เนื้อโน้ตต้องไม่ผ่าน context ของ agent):
-// อ่านต้นทาง = ร่างใน temp ชื่อเดียวกัน (ถ้ามี แก้ต่อจากครั้งก่อน) ไม่งั้นโน้ตใน mirror → แทน find→replace (ต้องพบพอดี 1)
-// → เก็บทั้งก้อนเป็นร่าง mode replace ใน temp พร้อม folder/description/tags เดิม · คืนแค่บริบท 3 บรรทัดรอบจุดแก้
-func (s *Store) Edit(target, find, replace string) (Note, string, error) {
-	if find == "" {
-		return Note{}, "", fmt.Errorf("edit %q: find is empty", target)
-	}
-	var src Note
-	if s.Has(target) {
-		src, _ = s.Get(target)
-		if src.Mode != "replace" {
-			return Note{}, "", fmt.Errorf("edit %q: temp note exists with mode append (a new section, not the whole note) — blm_patch it instead", target)
-		}
-	} else {
-		var err error
-		if src, err = s.Checkout(target); err != nil {
-			return Note{}, "", fmt.Errorf("edit %q: %v — use blm_save to create it", target, err)
-		}
-	}
-	if hits := strings.Count(src.Content, find); hits != 1 {
-		return Note{}, "", fmt.Errorf("edit %q: find matched %d times, must match exactly once", target, hits)
-	}
-	content := strings.Replace(src.Content, find, replace, 1)
-	n, err := s.save(Input{Name: target, Target: target, Mode: "replace", Folder: src.Folder, Description: src.Description, Tags: src.Tags, Content: content, HasContent: true, Base: src.Base}, "patch")
-	if err != nil {
-		return Note{}, "", err
-	}
-	return n, contextAround(content, replace, 3), nil
-}
-
 // Checkout ดึงโน้ตจาก mirror มาเป็นสำเนา local ใน store (mode replace, Base = updatedAt ของ mirror, .base/<name>.md = เนื้อหาตอนดึง)
 // concept เจ้าของ 2026-09-09: blm คือ local memory — แก้ที่ store ก่อน แล้ว sync ขึ้น backend · mirror มีไว้เทียบ ไม่ใช่ที่ทำงาน
 func (s *Store) Checkout(target string) (Note, error) {
@@ -607,7 +663,7 @@ func (s *Store) History(name string) []string {
 	return out
 }
 
-// Restore กู้โน้ตใน blm/ จากไฟล์ใน history/ (เจ้าของสั่ง 2026-09-09 หลัง blm_save ทับ blm-plugin ทั้งก้อน)
+// Restore กู้โน้ตใน blm/ จากไฟล์ใน history/ (เจ้าของสั่ง 2026-09-09 หลังคำสั่ง save เดิมทับ blm-plugin ทั้งก้อน)
 // ของปัจจุบันถูกเก็บลง history ก่อนเสมอ (action restore) จึงย้อนกลับได้อีก · historyFile รับทั้งชื่อไฟล์และ path
 func (s *Store) Restore(historyFile, name string) (Note, error) {
 	if historyFile == "" || name == "" {

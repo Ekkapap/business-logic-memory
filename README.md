@@ -2,7 +2,7 @@
 
 One binary. Session temp memory for AI agents + a single business-logic source of truth (`blm.md`) they test themselves against.
 
-- **Jot fast during the session** — `blm_save / blm_update / blm_patch`: local files, milliseconds, never blocks the agent while a slow memory backend (AgentsRoom, a wiki, a CLI) is synced once at the end.
+- **Jot fast during the session** — `blm_create / blm_append / blm_patch / blm_replace`: local files, milliseconds, never blocks the agent while a slow memory backend (AgentsRoom, a wiki, a CLI) is synced once at the end.
 - **One rules file `blm.md`** — what is true *now*, owned by the human. Each subtopic carries `memory:` `code:` `verify:` `updated_at:` refs. Agents read it (`blm`) whenever memory conflicts with code.
 - **Self-test report** — `/blm ["topic"]`: the agent writes what it believes *before* reading, then reports PASSED / NOT PASSED / UNKNOWN per subtopic with clickable `blm.md:<line>` refs. Columns are aligned by real monospace width (Thai combining vowels = 0, emoji = 2).
 - **Stats like `rtk gain`** — how often the agent was wrong, how often the rules file pulled it back, how often the human had to change a rule.
@@ -46,7 +46,7 @@ Then in Claude Code: `/reload-plugins` → `/blm_init` (guided analysis: main to
 | `blm report [name]` | `blm_report` | `/blm_report` |
 | `blm tools <action> [tool]` | `blm_tools` | `/blm_tools` |
 | `blm sync --push \| --pull [--apply]` | `blm_sync` | — |
-| `blm edit <target> <find> <replace>` | `blm_edit` | — |
+| `blm patch <name> <find> <replace>` | `blm_patch` | checks the note out of the backend mirror first when it is not in blm/ yet |
 | `blm diff <name>` · `blm merge <name> mine\|cloud\|content` | `blm_diff` · `blm_merge` | — |
 | `blm conflicts` · `blm resolve <name>` | `blm_conflict` · `blm_conflicts` · `blm_resolve` | — |
 | `blm scan [path]` · `blm graph [query] [--rebuild]` | `blm_scan` · `blm_graph` | graph source: SocratiCode graph in Qdrant → ast-grep → regex · local work runs on all cores (`BLM_WORKERS` overrides) |

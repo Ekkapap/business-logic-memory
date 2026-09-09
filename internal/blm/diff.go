@@ -38,7 +38,7 @@ func (s *Store) Diff(name string) (DiffResult, error) {
 	}
 	base, err := os.ReadFile(filepath.Join(s.Dir, ".base", draft.Target+".md"))
 	if err != nil {
-		res.Message = "no base snapshot for this draft (created with blm_save, not blm_edit) — diff against cloud only"
+		res.Message = "no base snapshot for this draft (created with blm_create, not checked out from the backend) — diff against cloud only"
 	} else {
 		res.BaseAvailable = true
 	}

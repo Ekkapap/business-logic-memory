@@ -22,7 +22,7 @@ func (s *Store) Propose(topic, heading, content, reason string) (ConflictReport,
 		return ConflictReport{}, fmt.Errorf("propose: topic, heading and content are required")
 	}
 	if s.RulesPath() == "" {
-		return ConflictReport{}, fmt.Errorf("propose: no blm.md yet — blm_save it first")
+		return ConflictReport{}, fmt.Errorf("propose: no blm.md yet — blm_create it first")
 	}
 	rules, err := s.Get(RulesNote)
 	if err != nil {

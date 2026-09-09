@@ -18,7 +18,7 @@ func mirrorNote(t *testing.T, root, name, body, updated string) string {
 func TestDiffMergeThreeWay(t *testing.T) {
 	s, _, root := tmpStore(t, BackendAgentsRoom)
 	p := mirrorNote(t, root, "auth", "line1\nline2\nline3\nline4\n", "2026-09-01T00:00:00Z")
-	if _, _, err := s.Edit("auth", "line4", "line4 mine"); err != nil {
+	if _, err := s.Patch("auth", "line4", "line4 mine"); err != nil {
 		t.Fatal(err)
 	}
 	d, err := s.Diff("auth")
@@ -60,7 +60,7 @@ func TestDiffMergeThreeWay(t *testing.T) {
 		t.Fatal("keep cloud must drop the draft")
 	}
 	// plan ต้องพก base ไปให้ push ตรวจ conflict
-	_, _, _ = s.Edit("auth", "line2", "line2 x")
+	_, _ = s.Patch("auth", "line2", "line2 x")
 	plan := s.PlanSync(s.List())
 	if len(plan) != 1 || plan[0].Base != "2026-09-03T00:00:00Z" {
 		t.Fatalf("plan base: %+v", plan)
@@ -70,7 +70,7 @@ func TestDiffMergeThreeWay(t *testing.T) {
 func TestPushSkipsConflicts(t *testing.T) {
 	s, _, root := tmpStore(t, BackendAgentsRoom)
 	mirrorNote(t, root, "old-note", "a\nb\n", "2026-01-01T00:00:00Z")
-	_, _, err := s.Edit("old-note", "b", "b mine")
+	_, err := s.Patch("old-note", "b", "b mine")
 	if err != nil {
 		t.Fatal(err)
 	}
