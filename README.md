@@ -2,11 +2,13 @@
 
 One binary. Session temp memory for AI agents + a single business-logic source of truth (`blm.md`) they test themselves against.
 
-- **Jot fast during the session** — `blm_create / blm_append / blm_patch / blm_replace`: local files, milliseconds, never blocks the agent while a slow memory backend (AgentsRoom, a wiki, a CLI) is synced once at the end.
-- **One rules file `blm.md`** — what is true *now*, owned by the human. Each subtopic carries `memory:` `code:` `verify:` `updated_at:` refs. Agents read it (`blm`) whenever memory conflicts with code.
-- **Self-test report** — `/blm ["topic"]`: the agent writes what it believes *before* reading, then reports PASSED / NOT PASSED / UNKNOWN per subtopic with clickable `blm.md:<line>` refs. Columns are aligned by real monospace width (Thai combining vowels = 0, emoji = 2).
+- **The store is the working copy** — `.agentsroom/blm/` holds `blm.md` and every note the agent touched, checked out from the backend with a base snapshot; the backend mirror is only there to tell who is newer. Notes are `synced` or `edited`; a push leaves them in place and advances the base.
+- **Jot fast during the session** — `blm_create` (new note only) · `blm_append` · `blm_patch` (find/replace, checks the note out first) · `blm_replace` (whole note, asks for `confirm:true` when the new content differs a lot). Local files, milliseconds; the slow backend (AgentsRoom, a wiki, a CLI) is synced once when the owner says so.
+- **One rules file `blm.md`** — what is true *now*, owned by the human. Each subtopic carries `memory:` `code:` `verify:` `updated_at:` refs, and every word that names a file becomes a link (`[db.ts](src/lib/db.ts)`, notes from the store or the mirror) — `linkPath` runs at checkout and on `blm conflict mark`.
+- **Conflicts and proposals the owner decides** — a clash between the local note and the backend, or an agent's proposal to change `blm.md`, becomes a git-style report `conflicts/[wait] <heading>-<time>.md` (Current = local / existing, Incoming = cloud / proposed). The owner ticks a box, or runs `blm conflicts -i` / `blm resolve <note> --keep incoming|current`; blm rewrites the note, renames the report to `[done]`, drops the `[Conflict](…)` marks and pushes. `blm conflict mark` places the marks; reports alone change nothing.
+- **Self-test report** — `/blm ["topic"]`: the agent writes what it believes *before* reading, then reports PASSED / NOT PASSED / UNKNOWN per subtopic with clickable `.agentsroom/blm/blm.md:<line>` refs. Columns are aligned by real monospace width (Thai combining vowels = 0, emoji = 2).
 - **Stats like `rtk gain`** — how often the agent was wrong, how often the rules file pulled it back, how often the human had to change a rule.
-- **History** — every change/delete snapshots the old file to `history/<name>-[action]-YYYYMMDD-HHmmss.md`.
+- **History** — every change/delete snapshots the old file to `history/<name>-[action]-YYYYMMDD-HHmmss.md`; `blm restore <history-file> <note>` puts one back (`blm restore <note>` lists them).
 - **Write lock** — Edit/Write denied, `blm guard` PreToolUse hook, optional OS sandbox `denyWrite`. Only `blm` writes the store.
 - **Cross-platform** — Go binary for macOS / Linux / Windows. Users call `blm status` directly; agents call the same code through MCP (`blm mcp`).
 
@@ -46,14 +48,14 @@ Then in Claude Code: `/reload-plugins` → `/blm_init` (guided analysis: main to
 | `blm report [name]` | `blm_report` | `/blm_report` |
 | `blm tools <action> [tool]` | `blm_tools` | `/blm_tools` |
 | `blm sync --push \| --pull [--apply]` | `blm_sync` | — |
-| `blm patch <name> <find> <replace>` | `blm_patch` | checks the note out of the backend mirror first when it is not in blm/ yet |
+| `blm create/append/patch/replace <name> …` · `blm get/delete <name>` | `blm_create` · `blm_append` · `blm_patch` · `blm_replace` · `blm_get` · `blm_delete` | `create` refuses an existing name · `append`/`patch` check the note out of the backend mirror first · `replace` needs `--confirm` on big changes |
+| `blm restore <history-file> <note>` | `blm_restore` | `blm restore <note>` lists the history files |
 | `blm diff <name>` · `blm merge <name> mine\|cloud\|content` | `blm_diff` · `blm_merge` | — |
-| `blm conflicts` · `blm resolve <name>` | `blm_conflict` · `blm_conflicts` · `blm_resolve` | — |
+| `blm conflicts [<id>] [-i] [--all]` · `blm conflict mark` · `blm resolve <note> [--keep current\|incoming] [--no-push]` | `blm_conflict {action: report\|mark, name \| content, topic, heading, reason}` · `blm_conflicts` · `blm_resolve {name, keep, push}` | `content` given = proposal for blm.md (Current = block as it is, Incoming = proposal) · resolve pushes the note unless `--no-push` |
 | `blm scan [path]` · `blm graph [query] [--rebuild]` | `blm_scan` · `blm_graph` | graph source: SocratiCode graph in Qdrant → ast-grep → regex · local work runs on all cores (`BLM_WORKERS` overrides) |
-| `blm get/save/update/patch/delete` | `blm_get/save/update/patch/delete` | — |
 | — | `blm` (read rules) | `/blm ["topic"]` |
 | — | `blm_stat` | — |
-| `blm guard` (hook) · `blm mcp` (server) · `blm path` · `blm init` | | `/blm_init` |
+| `blm guard` (hook) · `blm mcp` (server) · `blm path` · `blm init` | | `/blm_init` · `/blm:blm_help` (help + how memory and blm.md are edited) |
 
 `blm tools` manages the code-analysis neighbours the agent leans on during `/blm_init` (they cut agent token usage): `socraticode`, `obsidian`, `graphify` — `status · get · install · start · stop · restart · gen-graph`. Install logic lives in `scripts/tools.sh` (macOS/Linux) and `scripts/tools.ps1` (Windows), embedded in the binary; every install checks first and only adds what is missing.
 
@@ -68,6 +70,6 @@ Native mode writes `QDRANT_MODE/QDRANT_URL/OLLAMA_MODE/OLLAMA_URL=external/local
 
 ## Layout
 
-- `cmd/blm` — entrypoint · `internal/blm` — store, rules, layout, stats, status, tools · `internal/mcp` — stdio JSON-RPC · `internal/cli` — init, guard, PATH
+- `cmd/blm` — entrypoint · `internal/blm` — store (checkout/base/dirty, restore), rules, linkpath, conflict/propose/resolve, diff/merge, graph (socraticode/ast-grep/regex, parallel), layout, stats, status, tools · `internal/mcp` — stdio JSON-RPC · `internal/cli` — init, guard, PATH
 - `plugin/` — Claude Code plugin (manifest pointing at `blm mcp`, skill, commands) · `.claude-plugin/marketplace.json` — this repo is the marketplace
 - `make test` · `make install` (local: builds `./bin/blm`, `~/.local/bin/blm` becomes a symlink to it) or `make install-global` (replaces `~/.local/bin/blm` with a real file) (version = latest git tag, e.g. `2.0.6` or `2.0.6-2-g33bc0b6` past the tag) · `make release` (auto-bumps the patch number from the last tag on origin; `RELEASE_VERSION=v2.1.0` to pick one) — 5 targets + GitHub Release via `gh`

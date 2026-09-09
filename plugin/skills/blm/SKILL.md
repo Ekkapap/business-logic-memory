@@ -1,85 +1,63 @@
 ---
 name: blm
-description: How to record project knowledge during a session without blocking on slow memory backends — jot into blm_* temp notes, read the business-logic rules file (blm.md) whenever memory conflicts with code, sync once at the end. Use whenever you learn something worth remembering mid-task or are about to decide on business logic.
+description: How to record project knowledge during a session without blocking on slow memory backends — the store in .agentsroom/blm/ is the working copy (blm.md = the one business-logic rules file + every note you touched), edited only through blm_create/append/patch, proposals for blm.md go through blm_conflict for the owner to decide, synced once when the owner says "update memory". Use whenever you learn something worth remembering mid-task, are about to decide on business logic, or the owner points at something in blm.md.
 ---
 
-# blm — จดก่อน sync ทีเดียว · กฎธุรกิจอยู่ไฟล์เดียว
+# blm — local memory ที่ทำงานจริง · กฎธุรกิจอยู่ไฟล์เดียว · เจ้าของตัดสิน
 
-เจ้าของกำหนด 2026-09-08: `memory_save` ของ AgentsRoom กลาง session ช้า (3–10 วิ ปกติ เคยเกิน 120 วิ) **ระหว่าง session ห้ามเรียก `memory_save`** ให้จดลง temp แทน
-เครื่องมือทั้งหมดมาจาก binary `blm` ตัวเดียว: agent เรียกผ่าน MCP (`blm_*`) ผู้ใช้เรียกตรงใน terminal (`blm status`) โค้ดชุดเดียวกัน
+เครื่องมือทั้งหมดมาจาก binary `blm` ตัวเดียว: agent เรียกผ่าน MCP (`blm_*`) เจ้าของเรียกตรงในเทอร์มินัล (`blm status`, ต้องอยู่ในโฟลเดอร์โปรเจ็ค) โค้ดชุดเดียวกัน · `/blm:blm_help` = `blm --help` + สรุปนี้
 
-## ระหว่าง session
+## สามที่ เรียกให้ตรง (เจ้าของกำหนดชื่อ 2026-09-09)
 
-- เรียนรู้อะไรที่ควรอยู่ใน project memory → `blm_create { name, target, content }` (ชื่อใหม่เท่านั้น มีอยู่แล้วใช้ blm_append/blm_patch)
-  - `name` = `<target>-<YYYY-MM-DD>` เมื่อเป็น section ใหม่ของโน้ตเดิม · `target` = ชื่อโน้ตปลายทาง (agentsroom: ดู `.agentsroom/memory/INDEX.md`) · mode ค่าเริ่ม `append`
-  - โน้ตปลายทางยังไม่มี → ใส่ `description` ("Contains …") และ `folder`
-- ต่อท้ายโน้ตเดิม → `blm_append` · แก้ประโยค → `blm_patch` (find ต้องพบพอดี 1 ครั้ง ดึงจาก mirror ให้เองถ้ายังไม่อยู่ใน blm/) · ทับทั้งไฟล์โดยตั้งใจ → `blm_replace` · ดู/ลบ → `blm_get` · `blm_delete` · ภาพรวม → `blm_status`
-- ไฟล์อยู่ใน store (`blm status` บอก path) อ่านตรงได้ แต่แก้ผ่านเครื่องมือเท่านั้น — Edit/Write/Bash ถูก deny · ทุกการแก้/ลบสำเนาเดิมไป `history/<name>-[update|append|patch|delete]-YYYYMMDD-HHmmss.md` อัตโนมัติ
+- **blm.md / โน้ตใน blm/** = `.agentsroom/blm/` ที่ทำงานจริง โน้ตที่แตะครั้งแรกถูกดึงจาก AgentsRoom มาไว้ที่นี่พร้อม base สถานะต่อโน้ต `synced` / `edited` push แล้วไฟล์อยู่ต่อ base เลื่อน
+- **mirror** = `.agentsroom/memory/` สำเนาของ AgentsRoom ที่แอปเขียนลงมา ใช้เทียบว่าใครใหม่กว่าเท่านั้น ไม่ใช่ที่แก้
+- **AgentsRoom** = cloud ปลายทาง เปลี่ยนได้เฉพาะตอน push
+- จำนวนไฟล์สองฝั่งไม่ต้องเท่ากัน (cloud มี knowledge/how-to ที่ไม่ใช่ business logic · blm/ มีร่าง รายงาน กราฟ) สิ่งเดียวที่ต้องมีทั้งสองที่คือ blm.md
 
-## กฎธุรกิจ — `blm.md` (source of truth เดียว)
+## เขียน memory (agent ทำเอง ไม่ต้องรอใคร)
 
-- `blm.md` คือ "กฎที่เป็นจริงตอนนี้" เจ้าของเป็นคนเปลี่ยนเท่านั้น โน้ต memory อื่นคือที่มา/ประวัติ · หัวไฟล์มีตาราง `## Main Business` = หัวข้อหลักทั้งหมด
-- `blm` (ไม่ใส่ query = ทั้งไฟล์ · ใส่คำ = ทั้ง block ของหัวข้อย่อยที่ตรง) — เจ้าของสั่งผ่าน `/blm "<หัวข้อ>"` ตอนเริ่มวันและเมื่อ context บวม ตอบตามลำดับในคำสั่งนั้น
-- **agent เรียก `blm "<เรื่อง>"` เองได้ทุกเมื่อ** ที่ความจำขัดกับโค้ด/โน้ต หรือกำลังจะตัดสินใจเรื่อง business logic — อ่านเงียบ ๆ ไม่ต้องทำรายงาน รายงานเต็มมีเฉพาะตอนเจ้าของสั่ง `/blm`
-- โค้ดขัดกับกฎ = หยุดแล้วรายงาน ห้ามแก้โค้ดให้เข้ากับความจำ ห้ามแก้กฎเอง — เสนอผ่าน `blm_conflict {topic, heading, reason, content}` (รายงานรอเจ้าของตัดสิน)
-- เรื่องใหม่หรือหัวข้อย่อยที่โตเกินไป → เสนอยกเป็นหัวข้อหลัก (เจ้าของตัดสิน)
-- ชั้นของกฎ (เจ้าของกำหนด 2026-09-09): `global/conventions/blm.md` = กฎหลักของโปรเจ็ค · โน้ต `features/<x>` = กฎย่อย/รายละเอียดของฟีเจอร์นั้น มีได้เองโดยไม่ต้องลอกมาไว้ใน blm.md · บรรทัด `memory:` ของหัวข้อย่อยคือทางลงไปอ่านกฎย่อย · ขัดกันเมื่อไหร่ไม่มีใครชนะอัตโนมัติ รายงานให้เจ้าของตัดสิน แล้วผลลงที่ blm.md (แก้โน้ตฟีเจอร์ด้วย `blm_patch`)
+- `blm_create {name, content, description, folder, target, mode}` โน้ตใหม่เท่านั้น ชื่อซ้ำ = ปฏิเสธ
+- `blm_append {name, content}` ต่อท้าย · `blm_patch {name, find, replace}` ค้นหา/แทนที่ พบพอดี 1 — ทั้งสองดึงโน้ตจาก mirror มาไว้ใน blm/ ให้เองถ้ายังไม่มี
+- `blm_replace {name, content, confirm}` ทับทั้งไฟล์ ต้องมีอยู่แล้ว ต่างมาก (ขนาด >30% หรือบรรทัดเดิมหาย >30%) blm คืน `needsConfirm` พร้อมตัวเลขและบรรทัดที่จะหาย เรียกซ้ำด้วย `confirm:true` เฉพาะเมื่อตั้งใจ ห้ามใช้กับ blm.md
+- **ห้าม `memory_save`/`memory_get` ตรง** (เนื้อโน้ตวิ่งผ่าน context และทับทั้งก้อน) · Edit/Write/Bash เขียน blm/ ถูก deny ทุกการเขียนผ่าน blm มี history: `history/<name>-[action]-YYYYMMDD-HHmmss.md` กู้ด้วย `blm_restore {name, history}` (`blm restore <ไฟล์> <โน้ต>`)
+- **เจ้าของชี้ปัญหาใน blm.md** (ลิงก์ผิด ข้อความผิด) = อ่านบรรทัดนั้นจริง (`grep -n` ใน `.agentsroom/blm/` อ่านได้) แล้ว `blm_patch` ทันที **ห้ามตอบว่า sandbox ไม่ให้แก้** ข้อจำกัดนั้นมีเฉพาะซอร์ส Go ของ blm
 
-## สำรวจโปรเจ็คโดยไม่พึ่งเครื่องมือนอก
+## กฎธุรกิจ — blm.md
 
-- `blm_scan` ขนาด/token/โปรเจ็คย่อย · `blm_graph` กราฟ import + symbol + call (hubs, clusters ต่อโฟลเดอร์, `query` หาว่าเรื่องนี้อยู่ไฟล์ไหน ใครเรียก) แหล่งข้อมูลตามลำดับ: กราฟ SocratiCode ใน Qdrant (ถ้า index ไว้) → ast-grep → regex ดูที่ป้าย engine · งาน local รันขนานตามจำนวนคอร์ ผลถูก cache ใน store/graph.json (`rebuild:true` เมื่อโค้ดเปลี่ยนมาก)
+- "กฎที่เป็นจริงตอนนี้" เจ้าของเป็นคนตัดสิน · หัวไฟล์มีตาราง `## Main Business` · หัวข้อย่อยละ block พร้อม `memory:` `code:` `verify:` `updated_at/by` · ทุกคำที่อ้างไฟล์เป็นลิงก์ `[ชื่อ](path จาก root)` (linkPath ทำเองตอน checkout และ `blm conflict mark` ไม่ครอบด้วย `<>`)
+- `blm {query?, trigger}` อ่านกฎ (ว่าง = ทั้งไฟล์ · คำ = block ที่ตรง) เจ้าของสั่ง `/blm "<หัวข้อ>"` ตอนเริ่มวัน · agent เรียกเองเงียบ ๆ ได้ทุกเมื่อที่ความจำขัดกับโค้ด
+- โค้ดขัดกับกฎ = หยุดแล้วรายงาน ห้ามแก้โค้ดให้เข้ากับความจำ ห้ามแก้กฎเอง
+- ชั้นของกฎ: blm.md = กฎหลักของโปรเจ็ค · โน้ต `features/<x>` = กฎย่อยของฟีเจอร์ (บรรทัด `memory:` คือทางลงไปอ่าน) · โปรเจ็คย่อยในโฟลเดอร์ (เช่น `wireguard/`) เป็นหัวข้อหลักของตัวเอง ไม่ใช่ noise
+- **แก้ blm.md สองทาง**: ความหมายของกฎเปลี่ยนและเจ้าของยังไม่ตัดสิน → ยื่นข้อเสนอ (ด้านล่าง) · เจ้าของสั่งแก้จุดใดชัด ๆ หรือแก้เชิงกล (ลิงก์ ตัวสะกด ชื่อไฟล์) → `blm_patch {name:"blm", …}` ผลอยู่ในเครื่องจนสั่ง push
+- เจ้าของเปลี่ยนกฎ = override ความจำเดิมทั้งเรื่อง → `blm_stat {event:"override", topic, note}` แล้วแก้ตามข้างบน
 
-## สถิติ (ดูใน `blm_status` / `blm status`)
+## ข้อเสนอและ conflict — เจ้าของตัดสินที่เดียว (`blm_conflict`)
 
-- `blm` ลง `read` ให้เอง (ส่ง `trigger: "user"` เมื่อเจ้าของสั่ง) · `blm_report {rows…}` ลง `check` ให้เอง
-- หลังตรวจ: NOT PASSED ที่คุณแก้ความเข้าใจได้เองจากไฟล์กฎ → `blm_stat {event:"fixed", count}` · เจ้าของถามเรื่องกฎแล้วคุณค้นไฟล์กฎมาตอบ → `blm_stat {event:"lookup", query}`
-- เจ้าของเปลี่ยนกฎ (ตอบต่างจากไฟล์ หรือสั่งเขียนกฎใหม่) = **override ความจำเดิมทั้งหมดของเรื่องนั้น** ต้องให้เจ้าของ confirm ก่อน แล้ว `blm_stat {event:"override", topic, note}` + แก้ blm.md ตรงจุดด้วย `blm_patch` หรือเสนอผ่าน `blm_conflict` — **ยังไม่ sync** จนกว่าเจ้าของสั่ง
+- `blm_conflict {topic, heading, reason, content}` = **ข้อเสนอแก้ blm.md** (ใช้ตอน /blm_init หรือเมื่อกฎควรเปลี่ยน) Current = block ที่มีอยู่ (ว่าง = หัวข้อย่อยใหม่) Incoming = content ที่เสนอ ยื่นซ้ำเรื่องเดิม = แทนฉบับเก่า
+- `blm_conflict {name, topic, heading, reason}` = **การชนจริง** ร่างใน blm/ กับ cloud ซ้อนกัน (`blm_diff` บอก) topic/heading = main/sub topic ของ blm.md ที่โน้ตนั้นเป็นส่วนประกอบ
+- ทั้งสองแบบได้รายงาน `conflicts/[wait] <heading>-<เวลา>.md` รูป git: `***<<<<<<< Current …***` / `---` / `***>>>>>>> Incoming …***` เจ้าของแก้ข้อความในฝั่งที่จะเก็บได้ · reason/content เขียนภาษาของเจ้าของ · **รายงานอย่างเดียวไม่แตะไฟล์ใด**
+- `blm_conflict {action:"mark"}` (`blm conflict mark`) ติดป้าย `[Conflict](path รายงาน)` ที่บรรทัด `memory:` หน้าลิงก์โน้ตที่ชน (หรือหัวข้อของ blm.md เองถ้าเป็นข้อเสนอ) และที่หัวข้อในโน้ตที่ชน · เรียกซ้ำได้ ผลเท่าเดิม · พ่วง linkPath ทั้ง blm.md ด้วย
+- เจ้าของตัดสิน: ติ๊กช่องในไฟล์แล้วบอก "resolve" · หรือ `blm conflicts` → `blm conflicts <id>` → `blm resolve <โน้ต> --keep incoming|current` (`-i` = โหมดโต้ตอบในเทอร์มินัลจริง) · agent เรียก `blm_resolve {name, keep}` เมื่อเจ้าของบอกแล้วเท่านั้น
+- resolve สำเร็จ = เขียนผลลงโน้ต ป้ายหาย รายงานเป็น `[done]` base เลื่อน และ **push โน้ตนั้นขึ้น AgentsRoom ทันที** (ปิดด้วย `push:false`)
+- `blm_conflicts` / `blm conflicts` ดูที่ค้าง (`all:true` รวม done) `blm status` ก็มีส่วน Conflicts · **อย่าทวง** เจ้าของตัดสินเมื่อพร้อม
 
-## แก้บางบรรทัดของโน้ตปลายทางที่มีอยู่แล้ว
+## sync (backend agentsroom/custom เท่านั้น)
 
-- **ห้าม** `memory_get` มาทั้งก้อนแล้ว `memory_save` กลับ (เนื้อโน้ตวิ่งผ่าน context สองรอบ) → ใช้ `blm_patch { name, find, replace }` blm ดึงโน้ตจาก mirror มาไว้ใน blm/ ครั้งแรก (พร้อม base) แล้วแทนข้อความ (ต้องพบพอดี 1) คืนแค่ metadata แก้ซ้ำได้ต่อจากไฟล์เดิม
-- section ใหม่ของโน้ตเดิม → `blm_append { name, content }`
+- เจ้าของสั่ง "update memory" → `blm_sync {apply:true, author, role}` blm spawn AgentsRoom MCP เอง ยิง `memory_save` ทีละตัว ตรวจด้วย `memory_list` ครั้งเดียว โน้ตที่ตรง base ไม่ถูกส่ง ไม่ retry เอง เนื้อโน้ตไม่ผ่าน context · cloud ถูกแก้หลัง base → ไม่ push ทับ คืน `conflict:` ให้ไป `blm_diff` → `blm_merge {keep}` หรือยื่น `blm_conflict`
+- `blm_sync {direction:"pull", apply:true}` เมื่อสงสัยว่า cloud เปลี่ยน: mirror สด แล้วโน้ตที่ไม่ได้แก้และ cloud ใหม่กว่า → ดึงทับ · แก้ค้าง+cloud เปลี่ยน → รายงานเป็น conflict ไม่ทับ
+- ห้ามยิง `memory_save` เองแทนขั้นตอนนี้ เว้นแต่ `blm_sync` ตอบว่าไม่พบ AgentsRoom MCP ใน `.mcp.json`
+- backend none/obsidian: ไม่มี sync ไฟล์ใน blm/ คือของจริง
 
-## ตอนเจ้าของสั่ง "update memory" (มีเฉพาะ backend ที่มีปลายทาง: agentsroom/custom)
+## สำรวจโปรเจ็ค
 
-1. `blm_sync { apply: true, author: "<ชื่อคุณ>", role: "<role id>" }` — **blm ทำเองทั้งหมด**: spawn AgentsRoom MCP, ยิง `memory_save` ทีละตัว (AgentsRoom รับขนานได้ตัวเดียว พิสูจน์ 2026-09-09) ตรวจด้วย `memory_list` ครั้งเดียว archive เฉพาะที่ยืนยันแล้วไป `.synced/` คืน ok/verified/error ต่อโน้ต ไม่ retry เอง เนื้อโน้ตไม่ผ่าน context ของคุณเลย (เจ้าของกำหนด 2026-09-09) · ใส่ `delete: ["ชื่อเก่า"]` เมื่อโน้ตถูกเปลี่ยนชื่อ (เช่น `project-business-logic` → `blm`)
-2. อ่าน `warnings` และรายการ `failed` ถ้ามี — รายการที่ล้มยังอยู่ใน temp เรียกซ้ำได้ด้วย `names` · error ที่ขึ้นต้น `conflict:` = มีคนแก้โน้ตบน cloud หลังร่างถูกสร้าง → `blm_diff {name}` ดูบรรทัดที่ต่างทั้งสองฝั่ง แล้วให้เจ้าของเลือก `blm_merge {name, keep: mine|cloud|content}` (mine = ใส่การแก้ของเราทับ cloud ปัจจุบันแบบ 3 ทาง ชนกันจะปฏิเสธ · content = รวมมือ) ห้ามตัดสินเองว่าฝั่งไหนชนะ · **เจ้าของไม่อยู่/ยังไม่ตอบ** (งานยาว กลางคืน) → `blm_conflict {name, topic, heading, reason}` ออกรายงานต่อบริเวณที่ชนไว้ที่ `conflicts/<id>-….wait.md` (block A cloud / block B ร่าง มี checkbox แก้ก่อนติ๊กได้) ป้าย `[Conflict: #n]` ขึ้นที่หัวข้อย่อยในร่าง แล้วทำงานอื่นต่อ ร่างนั้นห้าม push · เจ้าของติ๊กแล้วสั่ง "resolve" → `blm_resolve {name}` · `blm_conflicts` ดูว่าเหลืออะไร (`/blm` ก็แสดง conflicts ที่ค้าง)
-3. ห้ามเรียก `memory_save` เองแทนขั้นตอนนี้ เว้นแต่ `blm_sync` ตอบว่าไม่พบ AgentsRoom MCP ใน `.mcp.json` (เปิดโปรเจ็คใน AgentsRoom หนึ่งครั้งให้มันเขียน) ค่อยใช้แผนจาก `blm_sync` (ไม่ใส่ apply) ยิงขนานเอง
-- `blm_sync { direction: "pull", apply: true }` เมื่อสงสัยว่า backend เปลี่ยน: blm เรียก `memory_list` ให้ mirror สด แล้วเทียบ mirror กับสำเนา local ทุกฉบับ สำเนาที่ไม่ได้แก้และ cloud ใหม่กว่า → ดึงทับ · แก้ค้างอยู่และ cloud ก็เปลี่ยน → รายงาน conflict ไม่ทับ (blm_diff/blm_merge)
-- หลักการ: **store คือ local memory ที่ทำงานจริง** (`blm.md` อยู่ที่ `.agentsroom/blm/blm.md`) mirror คือสำเนาของ backend ไว้เทียบว่าใครใหม่กว่า ไม่ใช่ที่แก้ · push สำเร็จแล้วสำเนา local อยู่ต่อ (state synced) แค่ base เลื่อน · จำนวนไฟล์สองฝั่งไม่ต้องเท่ากันและไม่มีฝั่งไหนต้องมากกว่า (cloud มี knowledge/skill/how-to ที่ไม่ใช่ business logic · store มีร่าง รายงาน กราฟ) ห้ามเอาจำนวนมาเป็นเงื่อนไข สิ่งเดียวที่ต้องมีทั้งสองที่คือ blm.md
-- backend none/obsidian: ไม่มี `blm_sync` เลย — ไฟล์ใน store คือของจริง
+- `blm_scan` ขนาด/token/โปรเจ็คย่อย · `blm_graph {query, rebuild, html}` กราฟ import+symbol+call แหล่งข้อมูล: SocratiCode ใน Qdrant → ast-grep → regex (ดูป้าย engine) + markdown pass · งาน local ขนานทุกคอร์ · cache `graph.json`
+- /blm_init กับ blm.md ที่มีอยู่ = โหมดปรับปรุง: สำรวจ อ่านโน้ต แล้วยื่นทีละ block ผ่าน `blm_conflict` ไม่เขียนทับ · ร่างที่ยาวให้แยกเป็นโน้ตส่วนประกอบ (`blm_create` เช่น `custom-vpn-rules`) แล้ว ref จาก blm.md
 
-## กฎธุรกิจ — `blm.md` (source of truth เดียว)
+## สถิติ
 
-- `blm.md` คือ "กฎที่เป็นจริงตอนนี้" เจ้าของเป็นคนเปลี่ยนเท่านั้น โน้ต memory อื่นคือที่มา/ประวัติ · หัวไฟล์มีตาราง `## Main Business` = หัวข้อหลักทั้งหมด
-- `blm` (ไม่ใส่ query = ทั้งไฟล์ · ใส่คำ = ทั้ง block ของหัวข้อย่อยที่ตรง) — เจ้าของสั่งผ่าน `/blm "<หัวข้อ>"` ตอนเริ่มวันและเมื่อ context บวม ตอบตามลำดับในคำสั่งนั้น
-- **agent เรียก `blm "<เรื่อง>"` เองได้ทุกเมื่อ** ที่ความจำขัดกับโค้ด/โน้ต หรือกำลังจะตัดสินใจเรื่อง business logic — อ่านเงียบ ๆ ไม่ต้องทำรายงาน รายงานเต็มมีเฉพาะตอนเจ้าของสั่ง `/blm`
-- โค้ดขัดกับกฎ = หยุดแล้วรายงาน ห้ามแก้โค้ดให้เข้ากับความจำ ห้ามแก้กฎเอง — เสนอผ่าน `blm_conflict {topic, heading, reason, content}` (รายงานรอเจ้าของตัดสิน)
-- เรื่องใหม่หรือหัวข้อย่อยที่โตเกินไป → เสนอยกเป็นหัวข้อหลัก (เจ้าของตัดสิน)
-- ชั้นของกฎ (เจ้าของกำหนด 2026-09-09): `global/conventions/blm.md` = กฎหลักของโปรเจ็ค · โน้ต `features/<x>` = กฎย่อย/รายละเอียดของฟีเจอร์นั้น มีได้เองโดยไม่ต้องลอกมาไว้ใน blm.md · บรรทัด `memory:` ของหัวข้อย่อยคือทางลงไปอ่านกฎย่อย · ขัดกันเมื่อไหร่ไม่มีใครชนะอัตโนมัติ รายงานให้เจ้าของตัดสิน แล้วผลลงที่ blm.md (แก้โน้ตฟีเจอร์ด้วย `blm_patch`)
+- `blm` ลง read เอง (`trigger:"user"` เมื่อเจ้าของสั่ง) · `blm_report {rows…}` ลง check เอง · NOT PASSED ที่แก้ความเข้าใจได้จากไฟล์กฎ → `blm_stat {event:"fixed", count}` · เจ้าของถามแล้วคุณค้นกฎมาตอบ → `blm_stat {event:"lookup", query}`
 
-## สำรวจโปรเจ็คโดยไม่พึ่งเครื่องมือนอก
+## กติกาการทำงานกับเจ้าของ (2026-09-09)
 
-- `blm_scan` ขนาด/token/โปรเจ็คย่อย · `blm_graph` กราฟ import + symbol + call (hubs, clusters ต่อโฟลเดอร์, `query` หาว่าเรื่องนี้อยู่ไฟล์ไหน ใครเรียก) แหล่งข้อมูลตามลำดับ: กราฟ SocratiCode ใน Qdrant (ถ้า index ไว้) → ast-grep → regex ดูที่ป้าย engine · งาน local รันขนานตามจำนวนคอร์ ผลถูก cache ใน store/graph.json (`rebuild:true` เมื่อโค้ดเปลี่ยนมาก)
-
-## สถิติ (ดูใน `blm_status` / `blm status`)
-
-- `blm` ลง `read` ให้เอง (ส่ง `trigger: "user"` เมื่อเจ้าของสั่ง) · `blm_report {rows…}` ลง `check` ให้เอง
-- หลังตรวจ: NOT PASSED ที่คุณแก้ความเข้าใจได้เองจากไฟล์กฎ → `blm_stat {event:"fixed", count}` · เจ้าของถามเรื่องกฎแล้วคุณค้นไฟล์กฎมาตอบ → `blm_stat {event:"lookup", query}`
-- เจ้าของเปลี่ยนกฎ (ตอบต่างจากไฟล์ หรือสั่งเขียนกฎใหม่) = **override ความจำเดิมทั้งหมดของเรื่องนั้น** ต้องให้เจ้าของ confirm ก่อน แล้ว `blm_stat {event:"override", topic, note}` + แก้ blm.md ตรงจุดด้วย `blm_patch` หรือเสนอผ่าน `blm_conflict` — **ยังไม่ sync** จนกว่าเจ้าของสั่ง
-
-## ตอนเจ้าของสั่ง "update memory" (มีเฉพาะ backend ที่มีปลายทาง: agentsroom/custom)
-
-1. `blm_sync` → `plan[]` แต่ละรายการคือ argument ของ `memory_save` ที่พร้อมส่ง (custom: `command` ให้รันผ่าน Bash)
-2. อ่าน `warnings` แล้วทำตามแผน **ทุกรายการพร้อมกันในข้อความเดียว** (agentsroom: `memory_save` หนึ่ง tool call ต่อรายการ เติม `author`, `role` · custom: Bash เดียวต่อคำสั่งด้วย `&` + `wait`) — แผนรวมโน้ต target เดียวกันไว้แล้ว ทุกรายการจึงคนละโน้ต ยิงขนานได้ ห้ามรอทีละตัวเพราะ AgentsRoom ช้า (เจ้าของสั่ง 2026-09-09)
-3. `blm_sync { done: [...plan[].from ที่สำเร็จ] }` → ไฟล์ย้ายไป `.synced/`
-- `blm_sync {direction:"pull"}` ก่อนอ่านกฎเมื่อสงสัยว่า mirror เก่า (agentsroom: บอกให้เรียก `memory_list` บังคับ fetch)
-- backend none/obsidian: ไม่มี `blm_sync` เลย — ไฟล์ใน store คือของจริง
-
-## กฎ
-
-- temp คือ *ร่างของ section ที่จะเข้าโน้ตปลายทาง* ไม่ใช่ knowledge base ตัวที่สอง ห้ามอ่าน temp แทน memory จริง
-- ห้าม `memory_save` เอง นอกขั้นตอน sync — เว้นแต่เจ้าของสั่งชัดเจน
-- backend ที่ช้า (AgentsRoom) อาจค้าง 30–120 วิ — ทุกอย่างที่เขียนได้ใน temp ให้เขียนใน temp เท่านั้น
-- `blm_conflict {topic, heading, reason, content}` = **ข้อเสนอแก้ blm.md** ให้เจ้าของตัดสิน (ใช้ตอน /blm_init หรือเมื่อกฎควรเปลี่ยน): Current = block ที่มีอยู่ (ว่าง = หัวข้อย่อยใหม่) Incoming = content ที่เสนอ blm.md ไม่ถูกแก้จน resolve แล้ว push เอง ยื่นหลายข้อพร้อมกันได้
-- `blm_conflict {name, topic, heading, reason}` (ไม่มี content) เมื่อ blm_diff ซ้อนกันและตัดสินไม่ได้: topic/heading คือ **main/sub topic ของ blm.md** ที่โน้ตนั้นเป็นส่วนประกอบ (ไม่ใช่หัวข้อในโน้ต) ป้าย `[Conflict: #n]` ไปติดที่ `# topic` และ `## heading` ใน blm.md · reason เขียนภาษาของเจ้าของ · รายงานชื่อ `[wait] <heading>-<เวลา>.md` เจ้าของติ๊กแล้วสั่ง resolve → `[done]` และป้ายหาย
+- ก่อนเพิ่ม tool / flag / ไฟล์ใหม่ใน blm บอกหนึ่งบรรทัดว่าจะเพิ่มอะไรและของเดิมขยายแทนได้ไหม แล้วรอคำตอบ
+- ตอบสั้น จบเทิร์นเร็ว งานยาวรัน background · อ่านไฟล์จริงก่อนอธิบาย · ไม่ตั้งชื่อเรียกใหม่เอง · ทำงานได้ไม่ต้องรอใครให้ทำเลย ติดอะไรที่แก้เองไม่ได้ให้หยุดแล้วคุย ไม่วนลอง
