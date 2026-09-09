@@ -72,10 +72,8 @@ func tools(c blm.Config) []tool {
 			obj(map[string]any{"name": noteProps["name"], "keep": enum("", "mine", "cloud", "content"), "content": str("merged body when keep=content")}, "name", "keep")},
 		{"blm_graph", "Repo graph, cached in <store>/graph.json. Source order: SocratiCode's graph in Qdrant when the project is indexed (resolved imports + calls, all languages) → tree-sitter (ast-grep, `blm tools install tree-sitter`) from real AST: imports, definitions and cross-file calls; without it a coarse regex fallback (imports only, marked engine=regex). hubs = most imported/called files, clusters per folder with top symbols, query = find files/symbols matching a word with neighbours (who imports/calls whom). Meaning is not in the graph: install `embedding` (Ollama) or infer it yourself.",
 			obj(map[string]any{"query": str("word to look up (symbol or path); omit = summary"), "path": str("sub path to build from (omit = whole project)"), "rebuild": map[string]any{"type": "boolean", "description": "rebuild graph.json even if cached"}, "html": map[string]any{"type": "boolean", "description": "also write <store>/graph.html — an interactive force graph to open in a browser"}, "limit": map[string]any{"type": "number"}})},
-		{"blm_conflict", "Agent cannot decide a blm_diff conflict and the owner is not available: file it. The report is written for the OWNER — write `reason` in the owner's language (Thai on this project) saying what each side claims. Writes one report per conflicting region to <store>/conflicts/<id>-<topic>-<heading>.wait.md (block A = cloud, block B = draft, each with a markdown checkbox; the owner may edit a block before ticking it), keeps the 3-way result for reassembly, and tags blm.md at the `# <topic>` and `## <heading>` lines the conflicting note belongs to with [Conflict: #1, #2] (topic/heading = the Main Business topic and subtopic in blm.md, not headings of the note). The draft stays unpushed until blm_resolve.",
-			obj(map[string]any{"name": noteProps["name"], "topic": str("main topic (e.g. Authentication)"), "heading": str("subtopic heading exactly as in blm.md (e.g. LINE Login (delegated MFA))"), "reason": str("why you could not decide — what each side claims")}, "name", "topic", "heading", "reason")},
-		{"blm_propose", "Propose a change to blm.md that the OWNER must approve (use during /blm_init or whenever a rule should change): files a conflict-style report — Current (B) = the subtopic block as it is now (empty = new subtopic), Incoming (A) = your proposed block — marks the heading with [Conflict](<report>), and leaves blm.md untouched until the owner resolves (tick / blm conflicts -i / blm resolve blm --keep …), after which it is pushed. Write reason and content in the owner's language. Several proposals may wait at once.",
-			obj(map[string]any{"topic": str("Main Business topic exactly as in blm.md (# line)"), "heading": str("subtopic (## line) — existing or new"), "content": str("the whole proposed block: rules lines, memory:/code:/verify:/updated_at lines; '## heading' first line is optional"), "reason": str("why this change — what the note/code says")}, "topic", "heading", "content", "reason")},
+		{"blm_conflict", "Two uses, one report format the OWNER decides on (Current/Incoming, tick or blm conflicts -i). (1) Real clash: a blm_diff conflict you cannot decide — pass name (the note); blm writes one report per overlapping region and marks blm.md at the topic/subtopic the note belongs to plus the note heading. (2) Proposal: you want to change blm.md itself (during /blm_init or when a rule should change) — pass content (the whole proposed block for topic › heading; existing or new subtopic), name may be omitted; Current = the block as it is now, Incoming = your content; blm.md stays untouched until resolved, then it is pushed. Write reason/content in the owner's language (Thai here). Several reports may wait at once.",
+			obj(map[string]any{"name": noteProps["name"], "topic": str("main topic (e.g. Authentication)"), "heading": str("subtopic heading exactly as in blm.md (e.g. LINE Login (delegated MFA))"), "reason": str("why you could not decide — what each side claims"), "content": str("proposal mode: the whole proposed block (rules, memory:/code:/verify:/updated_at lines; leading '## heading' optional)")}, "topic", "heading", "reason")},
 		{"blm_conflicts", "List conflict reports: status wait/done (from the file name), topic › subtopic, which block is ticked — returns `terminal` ready to print. With id: the report itself as terminal text (Current = local draft, Incoming = cloud).", obj(map[string]any{"id": num("report id to show (omit = list)"), "all": boolean("include done reports in the list (default: waiting only)")})},
 		{"blm_resolve", "After the owner ticked one block per report (or with keep): reassemble the draft from the kept 3-way result using the chosen (possibly edited) blocks, rename the reports to [done], remove the [Conflict] marks, advance the base to the cloud version, then push the note so the backend equals the local copy. Refuses while any region is unticked or has both boxes ticked.",
 			obj(map[string]any{"name": noteProps["name"], "keep": enum("decide from the terminal without ticking the file: current = local draft (B) · incoming = cloud (A); applies to every open report of this note", "current", "incoming"), "push": boolean("after a complete resolve push this note to the backend at once so the cloud equals the local copy (default true)"), "author": str("agent display name for the push"), "role": str("role id for the push")}, "name")},
@@ -215,21 +213,21 @@ func (s *Server) Call(name string, a map[string]any) (any, error) {
 		}
 		return res, nil
 	case "blm_conflict":
+		if content, _ := a["content"].(string); strings.TrimSpace(content) != "" {
+			topic, _ := a["topic"].(string)
+			heading, _ := a["heading"].(string)
+			reason, _ := a["reason"].(string)
+			r, err := s.store.Propose(topic, heading, content, reason)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"ok": true, "report": r, "next": "owner decides: blm conflicts -i · blm resolve blm --keep current|incoming · or tick the report file; blm.md unchanged until then"}, nil
+		}
 		reports, err := s.store.OpenConflict(in.Name, getStr(a, "topic"), getStr(a, "heading"), getStr(a, "reason"))
 		if err != nil {
 			return nil, err
 		}
 		return map[string]any{"ok": true, "reports": reports, "next": "tell the owner which files to open; do not push this draft until blm_resolve"}, nil
-	case "blm_propose":
-		topic, _ := a["topic"].(string)
-		heading, _ := a["heading"].(string)
-		content, _ := a["content"].(string)
-		reason, _ := a["reason"].(string)
-		r, err := s.store.Propose(topic, heading, content, reason)
-		if err != nil {
-			return nil, err
-		}
-		return map[string]any{"ok": true, "report": r, "next": "owner decides: blm conflicts -i · blm resolve blm --keep current|incoming · or tick the report file; blm.md unchanged until then"}, nil
 	case "blm_conflicts":
 		list := s.store.ListConflicts()
 		if id, ok := a["id"].(float64); ok && id > 0 {
