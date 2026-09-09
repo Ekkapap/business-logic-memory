@@ -264,10 +264,20 @@ func run(cmd string, args []string) error {
 // รู้จักรูปที่ใช้บ่อย: แผน sync, ผล push, โน้ตหนึ่งใบ · ที่เหลือพิมพ์เป็น key: value ย่อหน้าตามชั้น ข้าม response ดิบ
 func renderHuman(res any) string {
 	var b strings.Builder
-	m, ok := res.(map[string]any)
+	// ผลจาก srv.Call เป็น type ของ Go (struct/slice) — วนผ่าน JSON ให้เป็น map/[]any รูปเดียวเหมือนที่ agent เห็น
+	var generic any
+	if raw, err := json.Marshal(res); err == nil {
+		_ = json.Unmarshal(raw, &generic)
+	}
+	m, ok := generic.(map[string]any)
 	if !ok {
 		out, _ := json.MarshalIndent(res, "", "  ")
 		return string(out) + "\n"
+	}
+	// โน้ตหนึ่งใบ (blm get): หัว + เนื้อหาเต็ม
+	if c, ok := m["content"].(string); ok && m["target"] != nil {
+		fmt.Fprintf(&b, "%s  (%s → %s · %s · base %s · updated %s)\n\n%s\n", str(m["name"]), str(m["mode"]), str(m["folder"]), map[bool]string{true: "edited", false: "synced"}[m["dirty"] == true], str(m["base"]), str(m["updatedAt"]), c)
+		return b.String()
 	}
 	if plan, ok := m["plan"].([]any); ok {
 		if len(plan) == 0 {
