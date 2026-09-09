@@ -315,7 +315,7 @@ func renderHuman(res any) string {
 			if x["verified"] != true {
 				mark = "✘"
 			}
-			fmt.Fprintf(&b, "%s %-22s %-8s → %-22s %4.0f ms", mark, str(x["name"]), str(x["mode"]), str(x["folder"]), num(x["ms"]))
+			fmt.Fprintf(&b, "%s %-22s %-8s %5.0f ms", mark, str(x["name"]), str(x["mode"]), num(x["ms"]))
 			if e := str(x["error"]); e != "" {
 				fmt.Fprintf(&b, "  %s", e)
 			}
