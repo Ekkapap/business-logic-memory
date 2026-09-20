@@ -317,8 +317,8 @@ func TestBuildFromSocraticode(t *testing.T) {
 	if len(sess.Symbols) != 1 || sess.Symbols[0] != "createSession" {
 		t.Fatalf("symbols %+v (variables must be dropped)", sess.Symbols)
 	}
-	if SocratiCodeProjectID("/Users/neo/Programming/MyGit/NPM-PORTAL") != "a1b7c40b404d" {
-		t.Fatalf("project id mismatch: %s", SocratiCodeProjectID("/Users/neo/Programming/MyGit/NPM-PORTAL"))
+	if SocratiCodeProjectID("/srv/app") != "dae668e4084f" { // sha256 ของ absolute path 12 ตัวแรก — ต้องตรงกับที่ SocratiCode ตั้งชื่อ collection
+		t.Fatalf("project id mismatch: %s", SocratiCodeProjectID("/srv/app"))
 	}
 }
 
