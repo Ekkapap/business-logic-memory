@@ -9,14 +9,14 @@
 ## ผล = สารบัญ 2 บรรทัดต่อผล
 
 ```
-search "เข้าสู่ระบบด้วย LINE ต้องกรอก OTP อีกไหม" — 4 hits (model bge-m3 · score: RRF, 1.0 = top of both semantic and keyword)
+search "ผู้ใช้ต้องยืนยันอีเมลก่อนเข้าสู่ระบบไหม" — 4 hits (model bge-m3 · score: RRF, 1.0 = top of both semantic and keyword)
   id   score  path:lines                                     origin
-  #1   0.50   src/lib/auth/line-link-token.ts:L44-L76        code 0.62
-       [typescript]  export type LineLinkIntent = "login" | "register" | "session";
-  #2   0.50   src/app/api/auth/line/login/route.ts:L40-L74   both ✓ 0.74
-       [typescript]  export async function GET(request: NextRequest): Promise<NextResponse> {
-  #3   0.45   src/features/RequestOtp/index.tsx:L80-L125     comment ~ 0.67
-       [typescript]  export function RequestOtp({
+  #1   0.50   src/lib/auth/verify-email.ts:L20-L58           code 0.62
+       [typescript]  export type VerifyIntent = "signup" | "login";
+  #2   0.50   src/app/api/auth/login/route.ts:L30-L64        both ✓ 0.74
+       [typescript]  export async function POST(request: Request): Promise<Response> {
+  #3   0.45   src/features/Login/index.tsx:L40-L85           comment ~ 0.67
+       [typescript]  export function LoginForm({
 search-id: 1n7wzapf   open a hit: blm search --get 1n7wzapf --id 1,3
 ```
 
@@ -52,8 +52,8 @@ chunk ของ socraticode ตัดตามขอบ function/class จึง
 ## ไฟล์อะไรอยู่ในผล — `.md` `.sql` และ `db/schema/`
 
 - **`.md` ใต้ store ของ blm และ `.agentsroom/`** (โน้ต, mirror memory) ถูกตัดออก**เสมอ** — ความจำไม่ใช่โค้ด ค้นความจำใช้ `blm` / `blm grep` · `.md` อื่น (`.planning/`, `design/`, README) ยังอยู่ในผลเป็น `doc` เพราะ spec ต้องหาเจอ · `excludeMd:true` / `--exclude md` ตัด `.md` ทั้งโปรเจ็ค · `lang:"typescript"` (= .ts+.tsx) / `go` / `markdown` เอาทีละภาษา
-- **SQL: index เฉพาะ `db/schema/<table>.sql`** — snapshot ของ schema ปัจจุบันจาก DEV (`bun run db:schema` ในโปรเจ็ค NPM-PORTAL; รันเองหลัง `db:migrate --write` บน DEV) ตารางละไฟล์: คอลัมน์/default/null, constraint, index, trigger, `comment on column` · migration (`db/postgres/*.sql`) และ dump **ไม่ index**: migration คือประวัติ หลายไฟล์เล่าตารางเดียวกันคนละเวลา search แยกไม่ออกว่าอันไหนยังจริง · dump คือข้อมูล (PII) · `.socraticodeignore`: `*.sql` ยกเว้น `!db/schema/*.sql`
-- กติกา dev ⊇ prod: snapshot จาก DEV เท่านั้น · `bun run db:schema --prod` เทียบ prod (อ่านอย่างเดียว) บอกว่าอะไรรอ deploy และเตือนถ้า prod มีสิ่งที่ dev ไม่มี
+- **SQL: index เฉพาะ `db/schema/<table>.sql`** — snapshot ของ schema ปัจจุบันจาก DEV (สคริปต์ของโปรเจ็คเป็นคน gen หลัง migrate ทุกครั้ง — ชื่อคำสั่งแล้วแต่โปรเจ็ค เช่น `db:schema`) ตารางละไฟล์: คอลัมน์/default/null, constraint, index, trigger, `comment on column` · migration (`db/postgres/*.sql`) และ dump **ไม่ index**: migration คือประวัติ หลายไฟล์เล่าตารางเดียวกันคนละเวลา search แยกไม่ออกว่าอันไหนยังจริง · dump คือข้อมูล (PII) · `.socraticodeignore`: `*.sql` ยกเว้น `!db/schema/*.sql`
+- กติกา dev ⊇ prod: snapshot จาก DEV เท่านั้น · สคริปต์เดียวกันแบบ `--prod` (อ่านอย่างเดียว) ใช้เทียบว่าอะไรรอ deploy และเตือนถ้า prod มีสิ่งที่ dev ไม่มี
 
 ## ลำดับที่ควรทำ
 

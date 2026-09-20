@@ -214,7 +214,7 @@ func runAstRule(bin, root, lang string, rule astRule, files []string) map[string
 			if i := strings.LastIndex(v, "."); i >= 0 {
 				v = v[i+1:]
 			}
-			// ชื่อสั้น/สามัญ (log, ok, fail, run, main …) ทำให้ไฟล์ helper กลายเป็น hub ปลอม — ข้าม (เห็นบน NPM-PORTAL 2026-09-09)
+			// ชื่อสั้น/สามัญ (log, ok, fail, run, main …) ทำให้ไฟล์ helper กลายเป็น hub ปลอม — ข้าม (เห็นบนโปรเจ็คจริง 2026-09-09)
 			if len(v) < 5 || genericCall[strings.ToLower(v)] {
 				continue
 			}

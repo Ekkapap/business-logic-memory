@@ -198,7 +198,7 @@ Directory ที่ skip โดยอัตโนมัติ:
 
 ตัวอย่าง:
   blm grep "session login" --path src --max-line 30
-  blm grep --term "portal" --term "snapshot" --file src/lib/portal/portal-snapshot.ts --json
+  blm grep --term "portal" --term "snapshot" --file src/lib/snapshot.ts --json
   blm grep "config database" --ext .ts,.js --max-result 20 --sc`
 
 const catHelp = `blm cat — แสดงผล grep result ที่บันทึกไว้พร้อม context
