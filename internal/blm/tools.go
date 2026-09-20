@@ -34,10 +34,16 @@ type ToolOpts struct {
 	RemoteHost string
 	// SC — ค่าที่ระบุมากับคำสั่ง ทับค่าใน config ทีละช่อง (ช่องว่าง = คงของเดิม)
 	SC SocratiCodeConfig
+	Args string // socraticode <fn>: JSON arguments for the MCP tool
 }
 
 // ToolsHelp ข้อความ `blm tools help` — ใช้ทั้ง CLI และ MCP
 const ToolsHelp = `blm tools <action> [tool] [--docker | --local | --remote <host> …]   tools: socraticode | obsidian | graphify | tree-sitter | embedding
+  socraticode <fn> [--args '{json}']   call a SocratiCode function through its own MCP (blm spawns npx socraticode@latest with the env of .claude/blm.json):
+                            index (codebase_index — blm keeps the process alive and prints progress until done) · graph (codebase_graph_build → blm's own graph.json + graph.html)
+                            · health · status · update · remove · list_projects … (= codebase_<fn>; search = use blm search instead) · MCP: blm_sc_index/graph/health/status · slash: /blm_sc_*
+                            socraticode runs as ONE long-lived process per project (started on first call, never killed — watcher/auto-resume/locks are its own,
+                            exactly like inside a session) · shutdown = ask it to exit · log: <store>/logs/socraticode.log, daemon: socraticode-daemon.log
   status                    state of the configured tools (or the one named)
   get <tool>                what install/start/stop will run for it
   install <tool>            check first, then install what is missing
@@ -82,6 +88,9 @@ func Tools(root string, c Config, action, tool string, opts ToolOpts, out io.Wri
 			return "no tools configured (blm init … --tools socraticode,obsidian,graphify,tree-sitter,embedding)", nil
 		}
 		return Table([]string{"Tool", "State", "Detail"}, rows), nil
+	}
+	if action == "socraticode" { // blm tools socraticode <fn> = ฟังก์ชันของ socraticode เอง (tools_call.go)
+		return toolsSocratiCodeCall(root, c, tool, opts.Args, out)
 	}
 	if action == "update" {
 		if tool != "socraticode" {

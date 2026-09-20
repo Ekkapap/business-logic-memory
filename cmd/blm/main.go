@@ -260,6 +260,11 @@ func run(cmd string, args []string) error {
 		return nil
 	case "guard":
 		return cli.Guard(root, os.Stdin, os.Stdout)
+	case "sc-daemon": // ภายใน: โปรเซสยาวที่ถือ socraticode ของโปรเจ็ค (เปิดโดย blm tools socraticode <fn> ครั้งแรก)
+		if len(args) > 0 {
+			root = args[0]
+		}
+		return blm.RunScDaemon(root)
 	case "init":
 		o, err := cli.ParseInit(args)
 		if err != nil {
@@ -321,7 +326,7 @@ func run(cmd string, args []string) error {
 			return nil
 		}
 	}
-	if _, err := os.Stat(filepath.Join(root, blm.ConfigFile)); err != nil && cmd != "init" && cmd != "version" && cmd != "path" && cmd != "guard" && cmd != "hook" && cmd != "statusline" && cmd != "mcp" && cmd != "grep" && cmd != "cat" && cmd != "self-update" && cmd != "--self-update" {
+	if _, err := os.Stat(filepath.Join(root, blm.ConfigFile)); err != nil && cmd != "init" && cmd != "version" && cmd != "path" && cmd != "guard" && cmd != "sc-daemon" && cmd != "hook" && cmd != "statusline" && cmd != "mcp" && cmd != "grep" && cmd != "cat" && cmd != "self-update" && cmd != "--self-update" {
 		return fmt.Errorf("no %s here (%s) — run blm inside the project folder, e.g. cd <project> && blm %s", blm.ConfigFile, root, cmd)
 	}
 	srv := mcp.New(root)
@@ -437,7 +442,7 @@ func run(cmd string, args []string) error {
 			return nil
 		}
 		// เรียกตรง (ไม่ผ่าน MCP) เพื่อ stream output ของ script ออก terminal ทันที
-		opts := blm.ToolOpts{Docker: flags["docker"] != "", Local: flags["local"] != "", Remote: flags["remote"] != ""}
+		opts := blm.ToolOpts{Docker: flags["docker"] != "", Local: flags["local"] != "", Remote: flags["remote"] != "", Args: flags["args"]}
 		if flags["remote"] != "1" {
 			opts.RemoteHost = flags["remote"]
 		}

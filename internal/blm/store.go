@@ -334,18 +334,6 @@ func (s *Store) Delete(name string) error {
 	return os.Remove(p)
 }
 
-// Archive ย้ายไฟล์ที่ sync แล้วไป .synced/ (เก็บหลักฐานไว้ ไม่ทิ้ง)
-func (s *Store) Archive(name string) (string, error) {
-	p, err := s.file(name)
-	if err != nil {
-		return "", err
-	}
-	dest := filepath.Join(s.Dir, ".synced")
-	_ = os.MkdirAll(dest, 0o755)
-	to := filepath.Join(dest, time.Now().UTC().Format("2006-01-02T15-04-05Z")+"-"+name+".md")
-	return s.rel(to), os.Rename(p, to)
-}
-
 // FindTargetFolder หา target ใน mirror: คืน folder (เช่น "features", "global/conventions") หรือ "" ถ้าไม่มี
 func (s *Store) FindTargetFolder(target string) (string, bool) {
 	if !s.HasMirror() {

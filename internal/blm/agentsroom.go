@@ -1,6 +1,7 @@
 package blm
 
 import (
+	"io"
 	"bufio"
 	"encoding/json"
 	"fmt"
@@ -21,6 +22,8 @@ type mcpEntry struct {
 	Command string            `json:"command"`
 	Args    []string          `json:"args"`
 	Env     map[string]string `json:"env"`
+	// LogFile — stderr ของ server ทั้งหมดถูก append ลงไฟล์นี้ด้วย (เจ้าของ 2026-09-20: ห้าม error เงียบ ทุกโปรเซสต้องมี log)
+	LogFile string `json:"-"`
 }
 
 // LoadAgentsRoomMCP อ่านรายการ AgentsRoom-MCP จาก .mcp.json ของโปรเจ็ค
@@ -52,6 +55,8 @@ type rpcReply struct {
 // Client หนึ่ง process ของ AgentsRoom MCP ใช้ยิงหลาย call พร้อมกัน (id แยก reader goroutine เดียว)
 type Client struct {
 	cmd     *exec.Cmd
+	stdin   io.WriteCloser
+	stderr  *tailBuf // บรรทัดท้าย ๆ ของ stderr — แนบใน error เมื่อ server ตายก่อนตอบ (เช่น npm EPERM) แทนที่จะเงียบ
 	in      *json.Encoder
 	mu      sync.Mutex
 	nextID  int
@@ -62,11 +67,21 @@ type Client struct {
 // Connect spawn server และ initialize · Timeout ต่อ call ค่าเริ่ม 180 วิ (AgentsRoom เคยช้าเกิน 2 นาที)
 func Connect(e mcpEntry) (*Client, error) {
 	cmd := exec.Command(e.Command, e.Args...)
+	setProcessGroup(cmd) // ลูกอยู่ใน process group ของตัวเอง → Close/Ctrl-C ฆ่าทั้งกลุ่ม (npx → node ลูกหลาน) ไม่เหลือ orphan index ต่อ
 	cmd.Env = os.Environ()
 	for k, v := range e.Env {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
-	cmd.Stderr = nil
+	tb := &tailBuf{}
+	cmd.Stderr = tb
+	if e.LogFile != "" {
+		_ = os.MkdirAll(filepath.Dir(e.LogFile), 0o755)
+		if f, err := os.OpenFile(e.LogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
+			fmt.Fprintf(f, "\n=== %s %s %s\n", time.Now().Format(time.RFC3339), e.Command, strings.Join(e.Args, " "))
+			cmd.Stderr = io.MultiWriter(tb, f)
+			tb.closer = f
+		}
+	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -76,9 +91,9 @@ func Connect(e mcpEntry) (*Client, error) {
 		return nil, err
 	}
 	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("cannot start AgentsRoom MCP (%s): %w", e.Command, err)
+		return nil, fmt.Errorf("cannot start MCP server (%s): %w", e.Command, err)
 	}
-	c := &Client{cmd: cmd, in: json.NewEncoder(stdin), pending: map[int]chan rpcReply{}, Timeout: 180 * time.Second}
+	c := &Client{cmd: cmd, stdin: stdin, stderr: tb, in: json.NewEncoder(stdin), pending: map[int]chan rpcReply{}, Timeout: 180 * time.Second}
 	go func() {
 		sc := bufio.NewScanner(stdout)
 		sc.Buffer(make([]byte, 1<<20), 64<<20)
@@ -103,7 +118,7 @@ func Connect(e mcpEntry) (*Client, error) {
 		for id, ch := range c.pending {
 			ch <- rpcReply{Error: &struct {
 				Message string `json:"message"`
-			}{"AgentsRoom MCP exited before answering"}}
+			}{"MCP server exited before answering" + c.stderr.tail()}}
 			delete(c.pending, id)
 		}
 		c.mu.Unlock()
@@ -166,12 +181,21 @@ func (c *Client) CallTool(name string, args map[string]any) (string, error) {
 	return text, nil
 }
 
+// Close — ฆ่าทั้งกลุ่มทันที (2026-09-20: เคยเปลี่ยนเป็น "ปิด stdin รอ 3 วิ" แล้วพัง — 3 วินั้นพอให้ auto-resume ของ socraticode
+// สร้าง collection ที่เพิ่ง remove กลับมาแล้วเริ่ม index ก่อนถูกฆ่า ทิ้งซากบน Qdrant · one-shot = ได้คำตอบแล้วจบ)
 func (c *Client) Close() {
 	if c.cmd.Process != nil {
+		killProcessGroup(c.cmd)
 		_ = c.cmd.Process.Kill()
 		_, _ = c.cmd.Process.Wait()
 	}
+	if c.stderr != nil && c.stderr.closer != nil {
+		_ = c.stderr.closer.Close()
+	}
 }
+
+// StderrTail — บรรทัดท้าย ๆ ของ stderr ของ server (log ของ socraticode) ไว้โชว์ตอนดูเหมือนค้าง
+func (c *Client) StderrTail() string { return strings.TrimPrefix(c.stderr.tail(), " — stderr: ") }
 
 // PushResult ผลของหนึ่งรายการในแผน
 type PushResult struct {
@@ -181,7 +205,6 @@ type PushResult struct {
 	OK       bool     `json:"ok"`
 	Ms       int64    `json:"ms"`
 	Error    string   `json:"error,omitempty"`
-	Archived []string `json:"archived,omitempty"`
 	// Response ข้อความที่ server ตอบ (ตัดสั้น) — 2026-09-09 พบว่า server ตอบ "ok" ทั้งที่ไม่ได้เขียน (ยิงขนาน 6 ตัว เข้าจริง 1)
 	Response string `json:"response,omitempty"` // เฉพาะตอนล้ม
 	Folder   string `json:"folder,omitempty"`   // folder ที่ backend วางโน้ตจริง (อาจต่างจากที่ขอ)
@@ -330,13 +353,20 @@ func (s *Store) PushAll(c *Client, plan []SyncItem, author, role string, deletes
 			continue
 		}
 		for _, from := range results[i].From {
-			// สำเนา local (มี Base) อยู่ต่อใน store — เลื่อน base ไปที่เวอร์ชันที่ backend รับแล้ว · ร่าง append ค่อย archive
-			if fn, err := s.Get(from); err == nil && fn.Base != "" && fn.Mode == "replace" {
+			// เจ้าของ 2026-09-20: โน้ตอยู่ที่เดิมเสมอ ไม่ย้ายไป .synced (AgentsRoom เองก็ทับไฟล์เดิม ประวัติมีใน history/ แล้ว)
+			// → หลัง push ทุกร่างกลายเป็นสำเนา checkout: mode replace, Base = updatedAt ที่ backend รับ, เนื้อ = ของ backend
+			// (replace = เนื้อเดิมตรงกันอยู่แล้ว · append = ต้องดึงจาก backend เพราะ mirror ของ desktop เขียนช้ากว่า tool return)
+			if fn, err := s.Get(from); err == nil && fn.Mode == "replace" {
 				_ = s.Rebase(from, n.UpdatedAt)
 				continue
 			}
-			if p, err := s.Archive(from); err == nil {
-				results[i].Archived = append(results[i].Archived, p)
+			if err := s.adoptFromBackend(c, from, results[i].Name, n); err != nil {
+				// ดึงไม่ได้ → สำเนาจาก mirror (อาจยังเก่า: Base เก่ากว่า → Pull รอบหน้าดึงทับให้เอง) · ไม่มีใน mirror → แค่เลื่อน base
+				if _, e := s.Checkout(results[i].Name); e != nil {
+					_ = s.Rebase(from, n.UpdatedAt)
+				} else if from != results[i].Name {
+					_ = s.Delete(from)
+				}
 			}
 		}
 	}
@@ -353,31 +383,6 @@ func (s *Store) PushAll(c *Client, plan []SyncItem, author, role string, deletes
 	return results, deleted
 }
 
-// Unarchive ย้ายไฟล์จาก .synced/ กลับเข้า store (ใช้กู้รายการที่ถูก archive ทั้งที่ยังไม่เข้า backend)
-// name = ชื่อไฟล์ใน .synced (มี stamp) หรือชื่อโน้ต (เลือกไฟล์ล่าสุดที่ลงท้ายด้วย -<name>.md)
-func (s *Store) Unarchive(name string) (string, error) {
-	dir := filepath.Join(s.Dir, ".synced")
-	entries, _ := os.ReadDir(dir)
-	var pick string
-	for _, e := range entries {
-		if e.Name() == name || strings.HasSuffix(e.Name(), "-"+name+".md") {
-			if e.Name() > pick {
-				pick = e.Name()
-			}
-		}
-	}
-	if pick == "" {
-		return "", fmt.Errorf("no archived note %q in .synced", name)
-	}
-	note := pick
-	if i := strings.LastIndex(pick, "Z-"); i >= 0 {
-		note = pick[i+2:]
-	}
-	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
-		return "", err
-	}
-	return note, os.Rename(filepath.Join(dir, pick), filepath.Join(s.Dir, note))
-}
 
 // folderOf — ดึง "folder" ชั้นบนสุดจากคำตอบ memory_save (JSON) · ว่างเมื่ออ่านไม่ได้
 func folderOf(text string) string {
@@ -388,4 +393,67 @@ func folderOf(text string) string {
 		_ = json.Unmarshal([]byte(text[i:]), &v)
 	}
 	return v.Folder
+}
+
+// tailBuf เก็บ stderr ไว้แค่ 2 KB ท้ายสุด
+type tailBuf struct {
+	mu     sync.Mutex
+	b      []byte
+	closer io.Closer // ไฟล์ log (ปิดตอน Close)
+}
+
+func (t *tailBuf) Write(p []byte) (int, error) {
+	t.mu.Lock()
+	t.b = append(t.b, p...)
+	if len(t.b) > 2048 {
+		t.b = t.b[len(t.b)-2048:]
+	}
+	t.mu.Unlock()
+	return len(p), nil
+}
+
+func (t *tailBuf) tail() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	s := strings.TrimSpace(string(t.b))
+	if s == "" {
+		return ""
+	}
+	lines := strings.Split(s, "\n")
+	if len(lines) > 6 {
+		lines = lines[len(lines)-6:]
+	}
+	return " — stderr: " + strings.Join(lines, " | ")
+}
+
+// adoptFromBackend — ร่าง append ที่ push แล้ว: ดึงโน้ตเต็มจาก backend (memory_get) มาเขียนทับร่างเป็นสำเนา checkout ชื่อเดิม
+func (s *Store) adoptFromBackend(c *Client, from, target string, n ListedNote) error {
+	text, err := c.CallTool("memory_get", map[string]any{"note": target, "scope": "project"})
+	var d struct {
+		OK          bool     `json:"ok"`
+		Folder      string   `json:"folder"`
+		Content     string   `json:"content"`
+		Description string   `json:"description"`
+		Tags        []string `json:"tags"`
+	}
+	if err == nil {
+		err = json.Unmarshal([]byte(text), &d)
+	}
+	if err == nil && !d.OK {
+		err = fmt.Errorf("memory_get %s: %.120s", target, text)
+	}
+	if err != nil {
+		return err
+	}
+	if from != target { // ร่างใช้ชื่อชั่วคราว → เก็บภายใต้ชื่อโน้ตจริง
+		_ = s.Delete(from)
+	}
+	folder := d.Folder
+	if folder == "" {
+		folder = n.Folder
+	}
+	_ = os.MkdirAll(filepath.Join(s.Dir, ".base"), 0o755)
+	_ = os.WriteFile(filepath.Join(s.Dir, ".base", target+".md"), []byte(d.Content), 0o644)
+	_, err = s.save(Input{Name: target, Target: target, Mode: "replace", Folder: folder, Description: d.Description, Tags: d.Tags, Content: d.Content, HasContent: true, Base: n.UpdatedAt}, "synced")
+	return err
 }

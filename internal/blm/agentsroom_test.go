@@ -75,6 +75,13 @@ func handleFake(line []byte, enc *json.Encoder, mu *sync.Mutex) {
 				mu.Unlock()
 				return
 			}
+			if m.Params.Name == "memory_get" {
+				body, _ := json.Marshal(map[string]any{"ok": true, "folder": "features", "content": "cloud:" + fmt.Sprint(m.Params.Args["note"]), "description": "d"})
+				mu.Lock()
+				_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "id": *m.ID, "result": map[string]any{"content": []map[string]any{{"type": "text", "text": string(body)}}}})
+				mu.Unlock()
+				return
+			}
 			time.Sleep(200 * time.Millisecond)
 			name := fmt.Sprint(m.Params.Args["name"])
 			text := "saved " + name
@@ -129,8 +136,19 @@ func TestPushAllParallel(t *testing.T) {
 	if ok != 4 || len(deleted) != 1 || !deleted[0].Verified {
 		t.Fatalf("pushed %+v deleted %+v", pushed, deleted)
 	}
-	if left := s.List(); len(left) != 1 || left[0].Name != "boom" {
-		t.Fatalf("only the failed note must remain: %+v", left)
+	// เจ้าของ 2026-09-20: ไม่มี .synced — โน้ตที่เข้าแล้วอยู่ที่เดิมเป็นสำเนา checkout (เนื้อจาก backend, Base เลื่อน, สะอาด) · ที่ล้มยังเป็นร่าง dirty
+	for _, n := range s.List() {
+		switch {
+		case n.Name == "boom":
+			if !n.Dirty || n.Base != "" {
+				t.Fatalf("failed note must stay a draft: %+v", n)
+			}
+		case n.Dirty || n.Base == "" || n.Mode != "replace" || strings.TrimSpace(n.Content) != "cloud:"+n.Name:
+			t.Fatalf("synced note must become a clean checkout: %+v", n)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(s.Dir, ".synced")); !os.IsNotExist(err) {
+		t.Fatal(".synced must not be created")
 	}
 	// โหมดขนานกับ server จำลองที่รับทีละตัว: ต้องรายงานว่าไม่เข้า (ไม่ retry) และร่างยังอยู่
 	_ = s.Delete("boom")
@@ -151,7 +169,7 @@ func TestPushAllParallel(t *testing.T) {
 		}
 	}
 	for _, n := range s.List() {
-		if strings.HasPrefix(n.Name, "p") {
+		if strings.HasPrefix(n.Name, "p") && n.Dirty {
 			kept++
 		}
 	}

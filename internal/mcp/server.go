@@ -142,9 +142,18 @@ func tools(c blm.Config) []tool {
 			obj(map[string]any{"action": enum("", "get", "list", "read", "write", "set", "patch", "delete"), "path": str("review id (980fe083) · path relative to the store (reviews/review-<id>.json) or to the project · folder for list"), "content": str("write: the whole new content"), "confirm": str("delete: the exact file name the owner confirmed"), "line": map[string]any{"type": "number", "description": "patch: first line (1-based) to replace — take start/end from blm_grep / blm_search hits"}, "endLine": map[string]any{"type": "number", "description": "patch: last line inclusive (default = line)"}, "insert": map[string]any{"type": "boolean", "description": "patch: insert content before line, delete nothing (line = count+1 appends)"}, "value": map[string]any{"description": "set: the new value for the node select points at (string/number/bool/object/array) · null = remove that key / array element · select ending in [+] appends to that array"}, "select": str("get/read: return only this node; set: the node to replace of the JSON instead of the whole file — topics · topics[0].subs · topics[id=nws6d].name · items[kind=candidate].label · items[id=c2].chat · topics.status (field of every element) · negative index ok")}, "action", "path")},
 		{"blm_stat", "Record one stat event (summary in blm_status): lookup = owner could not remember, agent searched the rules {query} · override = owner changed a rule after confirming {topic, note?} · fixed = how many NOT PASSED of the last check the agent corrected on its own from the rules file {count}",
 			obj(map[string]any{"event": enum("", "lookup", "override", "fixed"), "query": str(""), "topic": str(""), "note": str(""), "count": map[string]any{"type": "number"}}, "event")},
+		// blm_sc_* — ฟังก์ชันของ SocratiCode ผ่าน blm (เจ้าของ 2026-09-20): blm spawn MCP ของมันเองด้วย env จาก .claude/blm.json ไม่ต้องมี session ในโปรเจ็คนั้น
+		{"blm_sc_index", "Index this project into SocratiCode (codebase_index) through blm: spawns socraticode with the env of .claude/blm.json, keeps it alive and polls codebase_status until done — no session in the project needed. Then blm_search works.",
+			obj(map[string]any{"args": str("optional JSON for codebase_index (extraExtensions …); projectPath = this project")})},
+		{"blm_sc_graph", "Build blm's own graph.json + graph.html from SocratiCode's symbol graph: runs codebase_graph_build on the index (more accurate than ast-grep/regex), then stores it in <store>/graph.json for blm_graph / blm update. Needs blm_sc_index first.",
+			obj(map[string]any{"args": str("optional JSON for codebase_graph_build")})},
+		{"blm_sc_health", "SocratiCode codebase_health through blm: Ollama/Qdrant reachable, model present, index state.", obj(map[string]any{})},
+		{"blm_sc_status", "SocratiCode codebase_status through blm: chunks, indexing progress, watcher.", obj(map[string]any{})},
 		{"blm_tools", "Manage neighbour tools (socraticode | obsidian | graphify): status · get · install · start · stop · restart · gen-graph · help — acts when it knows the command, otherwise returns the command for the user to run",
 			obj(map[string]any{
 				"action": enum("", "status", "get", "install", "update", "start", "stop", "restart", "gen-graph", "help"), "tool": enum("", "socraticode", "obsidian", "graphify", "tree-sitter", "embedding"),
+				"call":      str("socraticode only: call one of ITS functions through its own MCP (blm spawns it with the env of .claude/blm.json) — index (codebase_index; blm waits and reports progress until done), status, health, update, graph_build, list_projects … (= codebase_<call>) · needs no session in that project"),
+				"args":      str("with call: JSON arguments for that function (projectPath defaults to this project)"),
 				"docker":    map[string]any{"type": "boolean", "description": "socraticode/embedding: Qdrant + Ollama in Docker instead of native"},
 				"local":     map[string]any{"type": "boolean", "description": "socraticode: install Qdrant + Ollama on THIS machine (the original mode)"},
 				"remote":    map[string]any{"type": "string", "description": "socraticode: host of a server that already runs Ollama :11434 + Qdrant :6333 (nothing installed here; saved to .claude/blm.json; env written to ~/.claude/settings.json) · \"config\" = reuse the saved values"},
@@ -152,17 +161,16 @@ func tools(c blm.Config) []tool {
 				"embeddingModel": map[string]any{"type": "string", "description": "remote: Ollama embedding model (e.g. bge-m3); needs embeddingDimensions + embeddingContextLength"}, "embeddingDimensions": map[string]any{"type": "string"}, "embeddingContextLength": map[string]any{"type": "string"},
 				"embeddingQueryPrefix": map[string]any{"type": "string", "description": "remote: task prefix for queries (empty for bge-m3; nomic = \"search_query: \")"}, "embeddingDocumentPrefix": map[string]any{"type": "string"},
 			}, "action")},
-		{"blm_sync", "push: sync temp notes into the backend. apply=true (preferred): blm spawns the AgentsRoom MCP itself, runs memory_save one note at a time (parallel:true to send all at once once the AgentsRoom build supports it), verifies with memory_list once, archives only what is verified and returns ok/verified/error per note — no retries — no note content passes through your context. Without apply: returns the plan for you to execute by hand. pull: refresh the mirror from the backend, then update clean local copies in the store (local edits are never overwritten; dirty + cloud changed = listed as conflict)",
+		{"blm_sync", "push: sync temp notes into the backend. apply=true (preferred): blm spawns the AgentsRoom MCP itself, runs memory_save one note at a time (parallel:true to send all at once once the AgentsRoom build supports it), verifies with memory_list once, turns each verified note into a checked-out local copy (it stays in blm/, base moved) and returns ok/verified/error per note — no retries — no note content passes through your context. Without apply: returns the plan for you to execute by hand. pull: refresh the mirror from the backend, then update clean local copies in the store (local edits are never overwritten; dirty + cloud changed = listed as conflict)",
 			obj(map[string]any{
 				"direction": enum("push (default) | pull", "push", "pull"),
-				"apply":     map[string]any{"type": "boolean", "description": "true = blm performs the memory_save/memory_delete calls itself (parallel) and archives; false = return the plan only"},
+				"apply":     map[string]any{"type": "boolean", "description": "true = blm performs the memory_save/memory_delete calls itself and rebases the local copies; false = return the plan only"},
 				"author":    str("agent display name for AgentsRoom (with apply)"),
 				"role":      str("canonical role id for AgentsRoom, e.g. fullstack (with apply)"),
 				"delete":    strArr("backend notes to delete after the push (e.g. an old name after a rename; with apply)"),
-				"done":      strArr("manual mode only: temp notes already pushed successfully → archive them"),
+				"done":      strArr("manual mode only: temp notes already pushed successfully → mark them synced (checked out from the mirror)"),
 				"names":     strArr("restrict the plan to these notes (omit = all)"),
 				"full":      map[string]any{"type": "boolean", "description": "manual mode only: include note bodies in the plan (default false — bodies stay out of your context)"},
-				"restore":   strArr("move these notes back from .synced/ into the store (recover items archived by an earlier push that did not really land)"),
 				"parallel":  map[string]any{"type": "boolean", "description": "with apply: send all saves at once instead of one by one (default false — the AgentsRoom build installed on 2026-09-09 drops concurrent saves; enable after it is updated)"},
 			})},
 	}
@@ -203,6 +211,10 @@ var toolHints = map[string][2]string{ // name → {related, next}
 	"blm_status":    {"blm_sync, blm_update", "drafts pending → blm_sync {apply:true} when the owner says so"},
 	"blm_sync":      {"blm_status", "errors → report, do not retry"},
 	"blm_tools":     {"blm_status", ""},
+	"blm_sc_index":  {"blm_sc_status, blm_search", "done → blm_search {query} works · graph → blm_sc_graph"},
+	"blm_sc_graph":  {"blm_graph, blm_update", "read it → blm_graph {query} · new topics from clusters → blm_update {html:true}"},
+	"blm_sc_health": {"blm_sc_status, blm_tools", "down → blm tools install socraticode --remote <host> / --local"},
+	"blm_sc_status": {"blm_sc_index", "no index → blm_sc_index"},
 }
 
 // Trailer — CLI ใช้ด้วย (blm <cmd> ที่ถูก pipe)
@@ -609,9 +621,23 @@ func (s *Server) Call(name string, a map[string]any) (any, error) {
 			return nil, fmt.Errorf("event must be lookup | override | fixed")
 		}
 		return map[string]any{"ok": true, "recorded": s.store.RecordStat(ev)}, nil
+	case "blm_sc_index", "blm_sc_graph", "blm_sc_health", "blm_sc_status": // search ไม่มี: blm_search เบากว่าและมี origin (เจ้าของ 2026-09-20)
+		fn := strings.TrimPrefix(name, "blm_sc_")
+		text, err := blm.Tools(s.root, s.cfg, "socraticode", fn, blm.ToolOpts{Args: getStr(a, "args")}, io.Discard)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"ok": true, "fn": "codebase_" + fn, "result": text}, nil
 	case "blm_tools":
 		docker, _ := a["docker"].(bool)
 		local, _ := a["local"].(bool)
+		if call := getStr(a, "call"); call != "" {
+			text, err := blm.Tools(s.root, s.cfg, "socraticode", call, blm.ToolOpts{Args: getStr(a, "args")}, io.Discard)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"ok": true, "call": call, "result": text}, nil
+		}
 		opts := blm.ToolOpts{Docker: docker, Local: local, Remote: getStr(a, "remote") != "", RemoteHost: getStr(a, "remote"), SC: blm.SocratiCodeConfig{
 			OllamaURL: getStr(a, "ollamaUrl"), QdrantURL: getStr(a, "qdrantUrl"),
 			EmbeddingModel: getStr(a, "embeddingModel"), EmbeddingDimensions: getStr(a, "embeddingDimensions"), EmbeddingContextLength: getStr(a, "embeddingContextLength"),
@@ -632,17 +658,6 @@ func (s *Server) Call(name string, a map[string]any) (any, error) {
 		}
 		apply, _ := a["apply"].(bool)
 		full, _ := a["full"].(bool)
-		if restore := getArr(a, "restore"); len(restore) > 0 {
-			var back []string
-			for _, n := range restore {
-				note, err := s.store.Unarchive(n)
-				if err != nil {
-					return nil, err
-				}
-				back = append(back, note)
-			}
-			return map[string]any{"ok": true, "restored": back}, nil
-		}
 		par, _ := a["parallel"].(bool)
 		return s.sync(getStr(a, "direction"), getArr(a, "done"), getArr(a, "names"), apply, getStr(a, "author"), getStr(a, "role"), getArr(a, "delete"), full, par)
 	}
@@ -671,19 +686,21 @@ func (s *Server) sync(direction string, done, names []string, apply bool, author
 		return map[string]any{"next": "call AgentsRoom `memory_list` to force a fresh fetch (mirror " + s.cfg.Mirror + " is overwritten with the real notes), then call blm again — or blm_sync {direction:pull, apply:true}"}, nil
 	}
 	if len(done) > 0 {
-		var archived []string
-		for _, n := range done {
-			p, err := s.store.Archive(n)
+		// manual mode: push ด้วยมือแล้ว → โน้ตอยู่ที่เดิมเป็นสำเนา checkout จาก mirror (ไม่มี .synced — เจ้าของ 2026-09-20)
+		var synced []string
+		for _, name := range done {
+			n, err := s.store.Get(name)
 			if err != nil {
 				return nil, err
 			}
-			archived = append(archived, p)
+			if _, err := s.store.Checkout(n.Target); err != nil {
+				_ = s.store.Rebase(name, time.Now().UTC().Format(time.RFC3339))
+			} else if name != n.Target {
+				_ = s.store.Delete(name)
+			}
+			synced = append(synced, n.Target)
 		}
-		var remaining []string
-		for _, n := range s.store.List() {
-			remaining = append(remaining, n.Name)
-		}
-		return map[string]any{"ok": true, "archived": archived, "remaining": remaining}, nil
+		return map[string]any{"ok": true, "synced": synced}, nil
 	}
 	notes := s.store.List()
 	if len(names) > 0 {
@@ -790,6 +807,7 @@ func (s *Server) agentsRoom() (*blm.Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	e.LogFile = filepath.Join(s.root, s.cfg.Store, "logs", "agentsroom.log") // stderr ของ AgentsRoom MCP ก็เก็บ (ห้าม error เงียบ)
 	return blm.Connect(e)
 }
 
