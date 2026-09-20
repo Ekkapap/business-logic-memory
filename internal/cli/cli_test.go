@@ -11,6 +11,7 @@ import (
 )
 
 func TestInitPresetsIdempotentAndMigrate(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // init แตะ ~/.claude/settings.json (hooks/sandbox) — ห้ามโดนของจริง
 	for _, tc := range []struct {
 		flag  string
 		store string
@@ -51,6 +52,13 @@ func TestInitPresetsIdempotentAndMigrate(t *testing.T) {
 			t.Fatalf("hooks %v", hooks)
 		}
 		Init(o) // รันซ้ำต้องไม่เพิ่มรายการซ้ำ
+		// hooks ระดับเครื่องถูกต่อสายครบ 4 ตัว และไม่ซ้ำเมื่อรันซ้ำ
+		var u map[string]any
+		raw, _ = os.ReadFile(filepath.Join(os.Getenv("HOME"), ".claude", "settings.json"))
+		_ = json.Unmarshal(raw, &u)
+		if h, _ := u["hooks"].(map[string]any); len(h["SessionStart"].([]any)) != 1 || len(h["UserPromptSubmit"].([]any)) != 1 || len(h["PostToolUse"].([]any)) != 2 {
+			t.Fatalf("global hooks: %s", raw)
+		}
 		raw, _ = os.ReadFile(filepath.Join(root, ".claude", "settings.json"))
 		_ = json.Unmarshal(raw, &settings)
 		if hooks := settings["hooks"].(map[string]any)["PreToolUse"].([]any); len(hooks) != 1 {
@@ -115,6 +123,7 @@ func TestInitPresetsIdempotentAndMigrate(t *testing.T) {
 }
 
 func TestGuardDenies(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // init แตะ ~/.claude/settings.json (hooks/sandbox) — ห้ามโดนของจริง
 	store := ".agentsroom/blm"
 	for _, cmd := range []string{
 		"rm -rf .agentsroom/blm/x.md",

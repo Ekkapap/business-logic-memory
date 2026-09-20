@@ -367,6 +367,43 @@ func Init(o InitOptions) []string {
 	}
 	_ = os.Remove(filepath.Join(o.Root, ".claude", "hooks", "guard-memory-temp.sh"))
 
+	// 2b. hooks ระดับเครื่อง (~/.claude/settings.json) — core brief ของ blm.md ทุก session/หลัง compact + pointer ต่อ prompt + เตือนก่อน grep
+	// (เจ้าของ 2026-09-20: install ใหม่ต้องได้ hook ครบ ไม่ใช่แค่ guard) · merge ไม่ทับ: มี "blm hook <event>" อยู่แล้ว = ข้าม
+	if home, err := os.UserHomeDir(); err == nil {
+		uf := filepath.Join(home, ".claude", "settings.json")
+		u := readJSON(uf)
+		uh := sub(u, "hooks")
+		added := 0
+		for _, ev := range []struct{ event, matcher, cmd string; timeout int }{
+			{"SessionStart", "", "blm hook session-start", 8000},
+			{"UserPromptSubmit", "", "blm hook prompt", 15000},
+			{"PostToolUse", "Grep|Glob", "blm hook grep-nudge", 8000},
+			{"PostToolUse", "Write|Edit|MultiEdit", "blm hook post-edit", 8000},
+		} {
+			list, _ := uh[ev.event].([]any)
+			raw, _ := json.Marshal(list)
+			if strings.Contains(string(raw), ev.cmd) {
+				continue
+			}
+			entry := map[string]any{"hooks": []any{map[string]any{"type": "command", "command": ev.cmd, "timeout": ev.timeout}}}
+			if ev.matcher != "" {
+				entry["matcher"] = ev.matcher
+			}
+			uh[ev.event] = append(list, entry)
+			added++
+		}
+		if added > 0 {
+			if err := writeJSON(uf, u); err != nil {
+				say("hooks    cannot write ~/.claude/settings.json: " + err.Error())
+				failures = append(failures, failure{"hooks", err.Error(), "no core brief after compaction, no search pointers per prompt", "see `blm hook --help` and add the hooks to ~/.claude/settings.json"})
+			} else {
+				say(fmt.Sprintf("hooks    ~/.claude/settings.json +%d (blm hook session-start / prompt / grep-nudge / post-edit)", added))
+			}
+		} else {
+			say("hooks    ~/.claude/settings.json already has the blm hooks")
+		}
+	}
+
 	// 3. sandbox ใน user settings (ตามขอเท่านั้น — กระทบทุกโปรเจ็ค)
 	if o.Sandbox {
 		home, _ := os.UserHomeDir()
