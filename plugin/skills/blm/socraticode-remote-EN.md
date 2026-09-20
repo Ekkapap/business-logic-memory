@@ -2,6 +2,8 @@
 
 **[ไทย](socraticode-remote.md)** · English
 
+**The stack where it belongs.** Ollama + Qdrant run on a GPU box (`blm tools install socraticode --remote <host>`), the dev machine keeps nothing resident, and the same command wires Claude Code hooks (index state at session start, top-3 pointers per prompt, a nudge when an agent greps instead of asking) and a statusline (`socraticode : online · 4213 nodes / 24326 edges · ✓ synced`).
+
 SocratiCode = Claude Code plugin (`giancarloerra/socraticode`) that indexes code into chunks at function boundaries (tree-sitter via ast-grep) → embeds with **Ollama** → stores in **Qdrant** and builds symbol/call graph. · Search **needs both services online** (question always embedded first, no keyword-only fallback). · blm uses this index via `blm_search` / `blm tools status` / `blm graph` without going through its MCP.
 
 ## Choose a mode

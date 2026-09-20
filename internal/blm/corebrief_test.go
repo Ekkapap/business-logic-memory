@@ -53,6 +53,12 @@ func TestCoreBriefExtract(t *testing.T) {
 	if text, _ := CoreBrief(t.TempDir(), c); text != "" {
 		t.Fatal("no rules file must give empty brief")
 	}
+	// "## Read first" ถูกฉีดตรง ๆ และไม่นับเป็น rule block
+	_ = os.WriteFile(filepath.Join(root, c.Store, "blm.md"), []byte("## Read first\n- memory_get {note:\"read-first\", scope:\"agent\"} — กติกาการทำงาน\n\n"+sampleRules), 0o644)
+	text, _ = CoreBrief(root, c)
+	if !strings.Contains(text, "Read first (before anything else in this session):\n  - memory_get {note:\"read-first\"") || strings.Contains(text, "Rule blocks: Read first") || strings.Contains(text, "· Read first") {
+		t.Fatalf("read first:\n%s", text)
+	}
 }
 
 func TestCoreBriefDebounce(t *testing.T) {

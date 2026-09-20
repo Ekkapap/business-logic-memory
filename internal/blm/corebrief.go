@@ -92,21 +92,25 @@ func CoreBrief(root string, c Config) (text, hash string) {
 	if i := strings.Index(body, "\n---\n"); strings.HasPrefix(body, "---\n") && i > 0 { // ตัด front matter
 		body = body[i+5:]
 	}
-	var table []string
-	var sections []string
-	inMain := false
+	var table, sections, readFirst []string
+	inMain, inRead := false, false
 	for _, l := range strings.Split(body, "\n") {
 		t := strings.TrimSpace(l)
 		switch {
 		case strings.HasPrefix(t, "## "):
 			h := strings.TrimSpace(t[3:])
 			inMain = strings.HasPrefix(h, "Main Business")
-			if !inMain && !strings.HasPrefix(h, "วิธีอ่าน") {
+			// "## Read first" / "## อ่านก่อน": บรรทัด - ใต้หัวข้อนี้ถูกฉีดตรง ๆ (เจ้าของ 2026-09-20: hook ฉีดแค่ blm.md จึงต้องมีลิงก์ไป
+			// read-first ของ agent ในนี้) ไม่ถือเป็น rule block
+			inRead = strings.HasPrefix(strings.ToLower(h), "read first") || strings.HasPrefix(h, "อ่านก่อน")
+			if !inMain && !inRead && !strings.HasPrefix(h, "วิธีอ่าน") {
 				if i := strings.Index(h, " [Conflict]"); i > 0 { // ตัดป้าย conflict ออกจากชื่อ
 					h = h[:i]
 				}
 				sections = append(sections, h)
 			}
+		case inRead && strings.HasPrefix(t, "- "):
+			readFirst = append(readFirst, "  "+t)
 		case inMain && strings.HasPrefix(t, "|") && !strings.HasPrefix(t, "| ---") && !strings.HasPrefix(t, "| Topic"):
 			cells := strings.Split(strings.Trim(t, "|"), "|")
 			if len(cells) >= 2 {
@@ -120,6 +124,9 @@ func CoreBrief(root string, c Config) (text, hash string) {
 	rel, _ := filepath.Rel(root, file)
 	var b strings.Builder
 	fmt.Fprintf(&b, "[blm] core business logic of this project — %s (the single source of truth; a memory note that disagrees loses)\n", rel)
+	if len(readFirst) > 0 {
+		b.WriteString("Read first (before anything else in this session):\n" + strings.Join(readFirst, "\n") + "\n")
+	}
 	if len(table) > 0 {
 		b.WriteString("Main Business:\n" + strings.Join(table, "\n") + "\n")
 	}

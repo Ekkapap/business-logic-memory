@@ -4,9 +4,7 @@
 
 ## What it is
 
-`blm_search` (CLI `blm search`) searches through SocratiCode's index **without going through its MCP**: embeds the question with the same model/prefix the index uses (read from `.claude/blm.json` section socraticode → env → `~/.claude/settings.json`), then Qdrant hybrid = meaning (dense) + exact words (BM25) combined with RRF — same method as `codebase_search` in every way. Gets same results and scores. · Different: blm **adds 3 things** that socraticode doesn't: table of contents instead of 10 chunks of code, filters `.md` that isn't code, and **origin** column (how much to trust).
-
-Ask in sentences. Thai or English. Don't need to know symbol names: `"do users who sign in with LINE need to enter OTP again"` · `"cookie consent policy version localStorage"`.
+**Code search that grades its own hits.** `blm search` uses the SocratiCode index (same hybrid dense + BM25 query, same scores) but answers with a two-line table of contents per hit instead of ten code chunks, opens only the chunks you pick with real file lines, drops notes/memory `.md` from results, and adds an **origin** column: whether the query matched the *code* or only a *comment*, and whether the comment agrees with its code (`code` · `both ✓` · `comment ⚠`). Thai or English questions, no symbol names needed.
 
 ## Result = table of contents, 2 lines per hit
 
@@ -56,6 +54,8 @@ SocratiCode's chunks split on function/class boundaries, so **function header co
 - **`.md` under blm store and `.agentsroom/`** (notes, memory mirror) cut **always** — memory isn't code. Find memory with `blm` / `blm grep`. · Other `.md` (`.planning/`, `design/`, README) still in results as `doc` because specs must be found. · `excludeMd:true` / `--exclude md` cut all `.md` in project. · `lang:"typescript"` (= .ts+.tsx) / `go` / `markdown` get one language.
 - **SQL: index only `db/schema/<table>.sql`** — snapshot of current schema from DEV (project script generates after migrate every time — command name varies by project, e.g., `db:schema`). One file per table: columns/default/null, constraint, index, trigger, `comment on column` · migration (`db/postgres/*.sql`) and dump **not indexed**: migration is history, many files tell the same table at different times, search can't tell which one is still current. · dump is data (PII). · `.socraticodeignore`: `*.sql` except `!db/schema/*.sql`.
 - Rule: dev ⊇ prod. Snapshot from DEV only. Same script with `--prod` (read-only) to compare what waits to deploy and alert if prod has something dev doesn't.
+
+**Current state, not history.** For SQL, only a generated per-table schema snapshot (`db/schema/<table>.sql`, refreshed after every dev migration) is indexed — migrations and dumps are not — so "which table stores X" lands on one true answer.
 
 ## Order of operations
 

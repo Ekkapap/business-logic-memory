@@ -4,15 +4,21 @@
 
 ## What is blm.md
 
-- "Rules that are true right now" for the project. Owner is the decider. · File begins with table `## Main Business`. · Each sub-heading is a block with `memory:` `code:` `verify:` `updated_at/by`. · Every word that names a file is a link `[name](path from repo root)` (linkPath does it at checkout and during `blm conflict mark`).
+**One rules file, owner-decided.** `blm.md` holds the business logic as it is *now*, with `memory:` / `code:` / `verify:` links. Agents read it, report `/blm` self-tests (what they believed *before* reading vs. what the rules say), and propose changes as git-style conflict reports the owner resolves — the file never changes behind the owner's back. Stats show how often the rules pulled an agent back.
+
+**One rules file `blm.md`** — what is true *now*, owned by the human. Each subtopic carries `memory:` `code:` `verify:` `updated_at:` refs, and every word that names a file becomes a link (`[db.ts](src/lib/db.ts)`, notes from the store or the mirror) — `linkPath` runs at checkout and on `blm conflict mark`.
+
+**blm.md can be an index.** A row of its Main Business table may link a topic note — `| [Authentication](global/conventions/blm/blm-authentication.md) | one-line cue |` — and that note holds every rule block of the topic. `blm {query}` follows the links (refs point at the topic file), proposals and resolves land on the topic note, a missing link shows up as `(missing)`, and the core brief injected by the hook is exactly the table. Topic folder: `global/conventions/blm` on AgentsRoom, `blm` at the top of `<ai-dir>/memory` (`.claude/memory/blm/`) elsewhere — or `topicsFolder` in `.claude/blm.json` / env `BLM_TOPICS_FOLDER` (`BLM_MEMORY_DIR` moves the memory root).
+
 - `blm {query?, trigger}` read rules (empty = whole file · word = matching blocks). Returns `refShort` as `<store>/blm.md:<line>` (clickable), `changedSinceLastRead`, `pendingDrafts`. · Owner says `/blm "<heading>"` at start of day. · Agent calls silently anytime understanding and code conflict.
 - **Code contradicts rules = stop and report**. Don't edit code to match memory, don't edit rules yourself.
-- **blm.md can be a table of contents** (owner 2026-09-20): rows in Main Business table are links `[Topic](<topicFolder>/blm-<topic>.md)` → all rules for that topic live in note `blm-<topic>` (front matter `folder:` = topicFolder), and `blm {query}` follows the link (ref points to topic file). Topics not yet split out stay under `# Topic` in blm.md the same way. Both styles can coexist. · Missing links show as `(missing)` block and in `blm status`. · topicFolder: agentsroom = `global/conventions/blm` · other backends = `blm` at top of `<ai-dir>/memory` (`.claude/memory/blm/`) · set yourself in `.claude/blm.json` `topicsFolder` or env `BLM_TOPICS_FOLDER` (`BLM_MEMORY_DIR` moves memory root). · core brief that hook injects = this table exactly.
 - Levels of rules: blm.md = main project rules. · notes in `features/<x>` = sub-rules of feature (line `memory:` points down). · sub-projects in folders (e.g., `wireguard/`) are major topics on their own, not noise.
 - **Edit blm.md two ways**: rule meaning changed and owner hasn't decided yet → file a proposal (below). · Owner says fix a specific point clearly or it's a mechanical edit (link, spelling, filename) → `blm_patch {name:"blm", find, replace}`. Result stays local until you push.
 - Owner changes rule = overrides old memory entirely → `blm_stat {event:"override", topic, note}` then edit the way above.
 
 ## Proposals and conflict — owner decides alone (`blm_conflict`)
+
+**Conflicts and proposals the owner decides** — a clash between the local note and the backend, or an agent's proposal to change `blm.md`, becomes a git-style report `conflicts/[wait] <heading>-<time>.md` (Current = local / existing, Incoming = cloud / proposed). The owner ticks a box, or runs `blm conflicts -i` / `blm resolve <note> --keep incoming|current`; blm rewrites the note, renames the report to `[done]`, drops the `[Conflict](…)` marks and pushes. `blm conflict mark` places the marks; reports alone change nothing.
 
 - `blm_conflict {topic, heading, reason, content}` = **proposal to change rules** (used at `/blm_init` or when rules should change). Current = block that exists (empty = new sub-heading). Incoming = content proposed. File again on same topic = replaces old version. · Topics split out as notes `blm-<topic>` already → report/resolve/push into that note (`blm resolve blm-<topic>`), not blm.md. Old proposals filed before the file split were redirected to the topic note themselves. · When resolving, the proposal is "appended" to the note's current content (no old snapshot that might be stale).
 - `blm_conflict {name, topic, heading, reason}` = **real collision**. Draft in blm/ vs. cloud stacked (`blm_diff` shows). topic/heading = main/sub topic of blm.md that the note is part of.
@@ -24,7 +30,8 @@
 
 ## Report /blm (self-test)
 
-- `/blm ["topic"]`: agent writes what they believe **before** reading rules (Before) → `blm {query}` → compare heading by heading PASSED / NOT PASSED / UNKNOWN with ref `<store>/blm.md:<line>` → After. · `blm_report {rows, before, after}` arranges columns by real display width (Thai vowels 0 width, emoji 2).
+**Self-test report** — `/blm ["topic"]`: the agent writes what it believes *before* reading, then reports PASSED / NOT PASSED / UNKNOWN per subtopic with clickable `.agentsroom/blm/blm.md:<line>` refs. Columns are aligned by real monospace width (Thai combining vowels = 0, emoji = 2).
+
 - NOT PASSED that you fix from reading the rules file → `blm_stat {event:"fixed", count}`.
 
 ## /blm_update — major topics new after /blm_init (owner 2026-09-20)

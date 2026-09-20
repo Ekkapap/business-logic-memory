@@ -2,6 +2,8 @@
 
 **[ไทย](install.md)** · English
 
+**One plugin, self-updating.** `blm init` installs the binary, the Claude Code plugin and the hooks; `blm self-update` refreshes both. CLI and MCP share one code path, so what the owner sees in the terminal is what the agent sees.
+
 blm has two parts that go together: **binary `blm`** on PATH (CLI + MCP server `blm mcp`) and **plugin `blm@blm`** in Claude Code (skill + slash commands + `.mcp.json` that points to `blm mcp`) — plugin without binary can't start MCP.
 
 ## 1. Install binary (once per machine) — run from root of the project blm should remember
@@ -19,7 +21,7 @@ go install github.com/Ekkapap/business-logic-memory/cmd/blm@latest && blm path &
 # Developer (checkout of repo): make install = build → ~/.blm/bin/blm · make install-dev = ~/.local/bin/blm → ./bin/blm of repo
 ```
 
-- Standard location `~/.blm/bin/blm` (Windows `%USERPROFILE%\.blm\bin\blm.exe`) · `~/.local/bin/blm` symlinks there. · `BLM_HOME` changes it.
+The installer puts the binary at `~/.blm/bin/blm` (Windows: `~\.blm\bin\blm.exe`) and links `~/.local/bin/blm` to it; `blm self-update` replaces that file from the latest GitHub release. Developers: `make install` builds into the same `~/.blm/bin` (the repo stays a clean checkout for commits), `make install-dev` links `~/.local/bin/blm` to the repo's `./bin/blm` instead, in which case `blm self-update` does `git pull` + `go build` there.
 - **backend** (where memory's central store is) pick at init and change later by running init again:
 
   | flag | store | sync |
@@ -59,11 +61,11 @@ In Claude Code: tools `blm_*` must show up (`blm`, `blm_create`, `blm_search`, `
 ## 4. Update
 
 ```sh
-blm self-update             # binary (global: latest release from GitHub · dev checkout: git pull + build) + plugin (claude plugin update blm@blm)
+blm self-update             # binary (dev checkout → git pull + go build in place · global install → latest GitHub release replaces the file) + plugin (claude plugin marketplace update blm → claude plugin update blm@blm)
 blm self-update --check     # look only
 ```
 
-MCP: `blm_selfupdate {check?, binary?, plugin?}` · after update `/mcp reconnect plugin:blm:blm` (running MCP still old binary till reconnect). · plugin version matches binary since the release where `make release` bumps `plugin.json`.
+MCP: `blm_selfupdate {check?, binary?, plugin?}` · after update `/mcp reconnect plugin:blm:blm` (running MCP still old binary till you reconnect). · plugin version matches binary since the release where `make release` bumps `plugin.json`.
 
 ## 5. Uninstall
 

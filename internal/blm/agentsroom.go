@@ -183,7 +183,8 @@ type PushResult struct {
 	Error    string   `json:"error,omitempty"`
 	Archived []string `json:"archived,omitempty"`
 	// Response ข้อความที่ server ตอบ (ตัดสั้น) — 2026-09-09 พบว่า server ตอบ "ok" ทั้งที่ไม่ได้เขียน (ยิงขนาน 6 ตัว เข้าจริง 1)
-	Response string `json:"response,omitempty"`
+	Response string `json:"response,omitempty"` // เฉพาะตอนล้ม
+	Folder   string `json:"folder,omitempty"`   // folder ที่ backend วางโน้ตจริง (อาจต่างจากที่ขอ)
 	// Verified = memory_list หลัง push ยืนยันว่า updatedAt ใหม่กว่าตอนเริ่ม (หรือโน้ตหายไปแล้วสำหรับ delete)
 	Verified bool `json:"verified"`
 }
@@ -261,10 +262,12 @@ func (s *Store) PushAll(c *Client, plan []SyncItem, author, role string, deletes
 		r := &results[i]
 		r.Name, r.Mode, r.From = item.MemorySave.Name, item.MemorySave.Mode, item.From
 		r.Ms = time.Since(t).Milliseconds()
-		r.Response = short(text)
 		r.OK = err == nil
 		if err != nil {
 			r.Error = err.Error()
+			r.Response = short(text) // ตอบกลับของ backend เฉพาะตอนล้ม (สำเร็จ = ok/verified/folder พอแล้ว — lean)
+		} else {
+			r.Folder = folderOf(text)
 		}
 	}
 	del := func(i int, name string) {
@@ -273,10 +276,10 @@ func (s *Store) PushAll(c *Client, plan []SyncItem, author, role string, deletes
 		r := &deleted[i]
 		r.Name, r.Mode = name, "delete"
 		r.Ms = time.Since(t).Milliseconds()
-		r.Response = short(text)
 		r.OK = err == nil
 		if err != nil {
 			r.Error = err.Error()
+			r.Response = short(text)
 		}
 	}
 	if parallel {
@@ -374,4 +377,15 @@ func (s *Store) Unarchive(name string) (string, error) {
 		return "", err
 	}
 	return note, os.Rename(filepath.Join(dir, pick), filepath.Join(s.Dir, note))
+}
+
+// folderOf — ดึง "folder" ชั้นบนสุดจากคำตอบ memory_save (JSON) · ว่างเมื่ออ่านไม่ได้
+func folderOf(text string) string {
+	var v struct {
+		Folder string `json:"folder"`
+	}
+	if i := strings.Index(text, "{"); i >= 0 {
+		_ = json.Unmarshal([]byte(text[i:]), &v)
+	}
+	return v.Folder
 }

@@ -4,6 +4,8 @@
 
 All normal Claude Code mechanics: hooks receive JSON on stdin then inject context back with `{"hookSpecificOutput":{"hookEventName":…,"additionalContext":…}}` · statusline receives JSON prints text · blm does it in one command (`blm hook …`, `blm statusline`). No scripts outside.
 
+**The concept comes back by itself.** One central hook (`blm hook <event>`) injects the *core* of `blm.md` — the Main Business table, the list of rule blocks and three standing rules — at every session start, including right after auto-compaction, and again before a prompt or after edits **only when a debounce has expired** (20 min by default, or when `blm.md` changed), so an agent editing fifty files in a row is not re-briefed fifty times. `/blm` lets the owner check at any moment whether the agent and the rules still agree.
+
 ## What gets injected to agent
 
 | event | command | does |
@@ -13,7 +15,7 @@ All normal Claude Code mechanics: hooks receive JSON on stdin then inject contex
 | `PostToolUse` matcher `Write\|Edit\|MultiEdit` | `blm hook post-edit` | core brief **past debounce only** — long job editing files rapid-fire, no new prompt still gets heart of rules as interval, not every time |
 | `PostToolUse` matcher `Grep\|Glob` | `blm hook grep-nudge` | warn index exists — "where is / how does" should use `blm_search` |
 
-**core brief** = Main Business table (topics + meaning) + list of rule blocks + 3 rules (read rules before edit · code vs. rules = stop · do only what's asked, owner decides scope) — pulled from blm.md in store not whole file (~25 lines). · Why: agent forgets goal/concept and overbuilds, brief new every session costs 30m–1h, after auto-compact context gone.
+**core brief** = the core of `blm.md` (Main Business table + rule blocks + three standing rules) — pulled from store not whole file. Injected at every session start incl. after compaction, and — debounced (`BLM_CORE_INTERVAL`, default 20 min, or when `blm.md` changed) — before a prompt / after Write/Edit. Index state at session start, top-3 `file:line` pointers per prompt (no code inlined), a nudge after Grep/Glob.
 
 **debounce** (state per session at `$TMPDIR/blm-hook-<session_id>.json`): inject again past `BLM_CORE_INTERVAL` minutes (default 20; `0` = every time) or blm.md changed (hash) · `session-start` injects always. · PreToolUse can't inject (Claude Code takes allow/deny only) so uses prompt = before acting, post-edit = during.
 
