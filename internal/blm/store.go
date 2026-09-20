@@ -44,10 +44,12 @@ type Store struct {
 	MirrorDir string
 	// Root ของโปรเจ็ค ใช้ทำ path relative ในผลลัพธ์
 	Root string
+	// Config ที่เปิดมา — topicNotes/Propose ใช้ TopicFolder/MemoryRoot ของมัน
+	Config Config
 }
 
 func Open(root string, c Config) *Store {
-	s := &Store{Dir: filepath.Join(root, c.Store), Root: root}
+	s := &Store{Dir: filepath.Join(root, c.Store), Root: root, Config: c}
 	if c.Mirror != "" {
 		s.MirrorDir = filepath.Join(root, c.Mirror)
 	}
@@ -177,7 +179,30 @@ func (s *Store) save(in Input, action string) (Note, error) {
 	if n.Mode != "replace" {
 		n.Mode = "append"
 	}
+	// ไฟล์กฎ (blm.md และโน้ตหัวข้อ blm-*) : ทุกคำที่อ้าง path เป็นลิงก์คลิกได้เสมอ ไม่ว่าเขียนผ่าน create/append/patch/replace
+	// (เจ้าของ 2026-09-20: blm_append ลง blm-custom-vpn แล้ว code: ไม่เป็นลิงก์) · idempotent ลิงก์เดิมไม่ถูกแตะ
+	if action != "link" && s.isRulesNote(in.Name) {
+		n.Content = s.linkPaths(n.Content)
+	}
 	return n, os.WriteFile(p, []byte(serializeNote(n)), 0o644)
+}
+
+// isRulesNote — blm.md เอง หรือโน้ตหัวข้อที่ตาราง Main Business ลิงก์ถึง
+func (s *Store) isRulesNote(name string) bool {
+	if name == RulesNote {
+		return true
+	}
+	raw, err := os.ReadFile(filepath.Join(s.Dir, RulesNote+".md"))
+	if err != nil {
+		return false
+	}
+	_, _, body := splitFront(string(raw))
+	for _, t := range s.topicNotes(body) {
+		if t.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // Update ต่อท้าย body (เหมือน memory_save mode append) — ต้องมีโน้ตอยู่ก่อน

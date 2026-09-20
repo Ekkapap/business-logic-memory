@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -15,6 +16,10 @@ import (
 //   - ที่เป็นลิงก์อยู่แล้วไม่แตะ นอกจาก normalize รูปเก่า `](<path>)` และ path relative จาก blm/ (../memory/…, name.md) ให้เป็น path จาก root
 //   - คำอื่นในบรรทัดคงเดิม ไม่แทรกบรรทัดว่าง
 var (
+	// ลิงก์ที่เคยถูกสร้างไว้ในโค้ดสแปน (`[wireguard/](wireguard/)`) — AgentsRoom แสดงเป็นตัวอักษร คลิกไม่ได้ (เจ้าของเห็น 2026-09-20) → ถอด backtick ออก
+	codeSpanLinkRe = regexp.MustCompile("`(\\[[^\\]]*\\]\\([^)]*\\))`")
+	// โค้ดสแปนทั่วไป: ข้างในไม่ลิงก์ (มันคือคำสั่ง/ชื่อไฟล์ที่พิมพ์ให้ก๊อป ไม่ใช่การอ้างไฟล์)
+	codeSpanRe  = regexp.MustCompile("`[^`]*`")
 	mdLinkRe    = regexp.MustCompile(`\[[^\]]*\]\((?:<[^>]*>|[^)\s]*)\)`)
 	oldDestRe   = regexp.MustCompile(`\]\(<([^>]*)>\)`)
 	pathTokenRe = regexp.MustCompile("^[`(\"']*([A-Za-z0-9_./*\\[\\]-]+?)([`)\"',.;:?]*)$")
@@ -31,12 +36,29 @@ func (s *Store) linkPaths(content string) string {
 		if inFence || strings.HasPrefix(l, "#") || strings.HasPrefix(l, "|") {
 			continue
 		}
-		l = s.normalizeLinks(l)
+		l = codeSpanLinkRe.ReplaceAllString(s.normalizeLinks(l), "$1")
 		isMemory := strings.HasPrefix(l, "memory:")
-		// แยกส่วนที่เป็นลิงก์อยู่แล้วออก แล้วประมวลผลเฉพาะข้อความรอบ ๆ
+		// โค้ดสแปนที่เป็น path เดี่ยว ๆ (`src/lib/db.ts`) → ลิงก์แทน backtick (เจ้าของ 2026-09-20: ทุกที่ที่อ้าง path ต้องคลิกได้) ·
+		// สแปนที่มีอย่างอื่นปน (`./gateway-fix.sh status`) = คำสั่ง คงไว้
+		l = codeSpanRe.ReplaceAllStringFunc(l, func(span string) string {
+			inner := strings.Trim(span, "`")
+			if strings.ContainsAny(inner, " `") {
+				return span
+			}
+			if link := s.linkFor(inner, isMemory); link != "" {
+				return link
+			}
+			return span
+		})
+		// แยกส่วนที่เป็นลิงก์อยู่แล้วและโค้ดสแปนออก แล้วประมวลผลเฉพาะข้อความรอบ ๆ
 		var out strings.Builder
 		last := 0
-		for _, m := range mdLinkRe.FindAllStringIndex(l, -1) {
+		skip := append(mdLinkRe.FindAllStringIndex(l, -1), codeSpanRe.FindAllStringIndex(l, -1)...)
+		sort.Slice(skip, func(a, b int) bool { return skip[a][0] < skip[b][0] })
+		for _, m := range skip {
+			if m[0] < last { // ซ้อนกัน (ลิงก์ในสแปน) — ข้าม
+				continue
+			}
 			out.WriteString(s.linkWords(l[last:m[0]], isMemory))
 			out.WriteString(l[m[0]:m[1]])
 			last = m[1]

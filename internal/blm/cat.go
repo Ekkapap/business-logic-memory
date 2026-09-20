@@ -115,35 +115,7 @@ func Cat(root, grepID string, resultIDs []int, context int) (*CatResult, error) 
 }
 
 // findGrepResultFile searches for a grep result file by ID
-func findGrepResultFile(root, grepID string) (string, error) {
-	// Try blm project store first
-	projectStore := filepath.Join(root, ".agentsroom", "blm", "tmp")
-	filename := fmt.Sprintf("grep-result-%s.json", grepID)
-	filePath := filepath.Join(projectStore, filename)
-	if _, err := os.Stat(filePath); err == nil {
-		return filePath, nil
-	}
-
-	// Try cache dir (check BLM_CACHE_DIR env for tests)
-	cacheDir := os.Getenv("BLM_CACHE_DIR")
-	if cacheDir == "" {
-		var err error
-		cacheDir, err = os.UserCacheDir()
-		if err == nil {
-			cachePath := filepath.Join(cacheDir, "blm", "grep", filename)
-			if _, err := os.Stat(cachePath); err == nil {
-				return cachePath, nil
-			}
-		}
-	} else {
-		cachePath := filepath.Join(cacheDir, "blm", "grep", filename)
-		if _, err := os.Stat(cachePath); err == nil {
-			return cachePath, nil
-		}
-	}
-
-	return "", fmt.Errorf("grep result not found: %s", grepID)
-}
+func findGrepResultFile(root, grepID string) (string, error) { return findResultFile(root, "grep", grepID) }
 
 // ParseResultIDs parses a comma-separated list of result IDs
 func ParseResultIDs(s string) ([]int, error) {

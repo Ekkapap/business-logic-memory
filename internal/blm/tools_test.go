@@ -38,7 +38,7 @@ func TestSocratiCodeRemoteInstall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("install: %v", err)
 	}
-	if !strings.Contains(out, "model bge-m3 present") || !strings.Contains(out, "config: socraticode section saved") {
+	if !strings.Contains(out, "bge-m3 ✔") || !strings.Contains(out, "socraticode section saved") {
 		t.Fatalf("unexpected output:\n%s", out)
 	}
 	// config จำค่าไว้ + prefix ว่างเพราะโมเดลไม่ใช่ nomic
@@ -54,11 +54,12 @@ func TestSocratiCodeRemoteInstall(t *testing.T) {
 		}
 	}
 
-	// รอบสอง: --remote เฉย ๆ ใช้ค่าที่จำไว้ · ไม่ระบุ flag เลยก็ไป remote เพราะ config มี
-	for _, o := range []ToolOpts{{Remote: true}, {}} {
-		if _, err := Tools(root, Load(root), "install", "socraticode", o, nil); err != nil {
-			t.Fatalf("reuse saved config %+v: %v", o, err)
-		}
+	// รอบสอง: --remote เฉย ๆ ใช้ค่าที่จำไว้ · ไม่ระบุ flag เลย = หยุดพร้อมคำแนะนำ ไม่ทำอะไร
+	if _, err := Tools(root, Load(root), "install", "socraticode", ToolOpts{Remote: true}, nil); err != nil {
+		t.Fatalf("reuse saved config: %v", err)
+	}
+	if _, err := Tools(root, Load(root), "install", "socraticode", ToolOpts{}, nil); err == nil || !strings.Contains(err.Error(), "--remote") || !strings.Contains(err.Error(), "--local") || !strings.Contains(err.Error(), "Nothing changed") {
+		t.Fatalf("no-flag install with a remote section must stop and advise, got %v", err)
 	}
 	// get/start บอกว่าไม่มีอะไรทำบนเครื่องนี้
 	if out, _ := Tools(root, Load(root), "start", "socraticode", ToolOpts{}, nil); !strings.Contains(out, "nothing to do") {
@@ -73,7 +74,7 @@ func TestSocratiCodeRemoteRefusesBadHost(t *testing.T) {
 	// โมเดลไม่มีบน host → ไม่บันทึกอะไร
 	_, err := Tools(root, Config{Backend: BackendNone, Store: ".claude/blm"}, "install", "socraticode",
 		ToolOpts{Remote: true, SC: SocratiCodeConfig{OllamaURL: srv.URL, QdrantURL: srv.URL, EmbeddingModel: "bge-m3", EmbeddingDimensions: "1024", EmbeddingContextLength: "8192"}}, nil)
-	if err == nil || !strings.Contains(err.Error(), "NOT found") {
+	if err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("expected missing-model error, got %v", err)
 	}
 	if Load(root).SocratiCode != nil {
@@ -104,5 +105,48 @@ func TestSocratiCodeEnvLines(t *testing.T) {
 	raw, _ = os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
 	if strings.Contains(string(raw), "EMBEDDING_") {
 		t.Fatalf("EMBEDDING_* should be removed:\n%s", raw)
+	}
+}
+
+func TestWireClaudeIdempotent(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	// ไม่มีอะไรเลย → สร้างสคริปต์ค่าเริ่มต้น + hooks + statusLine
+	out := strings.Join(WireClaude(), "\n")
+	if !strings.Contains(out, "wrote default") || !strings.Contains(out, "statusLine → ~/.claude/statusline-command.sh") {
+		t.Fatalf("first wire: %s", out)
+	}
+	script, _ := os.ReadFile(filepath.Join(home, ".claude", "statusline-command.sh"))
+	if strings.Count(string(script), slBlockBegin) != 1 || !strings.Contains(string(script), "blm statusline --top-only") || !strings.HasPrefix(string(script), "#!/bin/bash") {
+		t.Fatalf("default script wrong:\n%s", script)
+	}
+	// รอบสอง + hook เก่าของเรา (socraticode-hooks.cjs) หาย · ของคนอื่น (rtk, graft) อยู่ครบ + เตือนเรื่อง graft · ของเราไม่ซ้ำ
+	settingsFile := filepath.Join(home, ".claude", "settings.json")
+	_ = os.WriteFile(settingsFile, []byte(`{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"rtk hook claude"}]}],
+	  "SessionStart":[{"hooks":[{"type":"command","command":"node \"$HOME/.claude/helpers/socraticode-hooks.cjs\" session-start"}]}],
+	  "PostToolUse":[{"matcher":"Write|Edit","hooks":[{"type":"command","command":"node graft-hooks.cjs post-edit"}]},{"matcher":"Grep|Glob","hooks":[{"type":"command","command":"blm hook grep-nudge"}]}]},
+	  "statusLine":{"type":"command","command":"~/.claude/statusline-command.sh"}}`), 0o644)
+	// สคริปต์ที่เจ้าของเคยวาง block มือ (ไม่มี marker) → ต้องถูกแทนด้วย block ใหม่ block เดียว
+	_ = os.WriteFile(filepath.Join(home, ".claude", "statusline-command.sh"), []byte("#!/bin/bash\ninput=$(cat)\nsc=$(echo \"$input\" | node socraticode-statusline.cjs)\nprintf x\n[ -n \"$sc\" ] && printf '\\n%s' \"$sc\"\n"), 0o755)
+	out = strings.Join(WireClaude(), "\n")
+	raw, _ := os.ReadFile(settingsFile)
+	s := string(raw)
+	if strings.Contains(s, "socraticode-hooks.cjs") {
+		t.Fatalf("our old .cjs hook still present:\n%s", s)
+	}
+	if !strings.Contains(s, "graft-hooks.cjs") || !strings.Contains(out, "graft uninstall -y") {
+		t.Fatalf("graft hook must stay, with advice:\n%s\n%s", s, out)
+	}
+	if !strings.Contains(s, "rtk hook claude") || strings.Count(s, "blm hook grep-nudge") != 1 || strings.Count(s, "blm hook prompt") != 1 || strings.Count(s, "blm hook session-start") != 1 {
+		t.Fatalf("hooks wrong:\n%s", s)
+	}
+	script, _ = os.ReadFile(filepath.Join(home, ".claude", "statusline-command.sh"))
+	if strings.Count(string(script), slBlockBegin) != 1 || strings.Contains(string(script), "socraticode-statusline.cjs") || !strings.Contains(string(script), "printf x") {
+		t.Fatalf("script not rewritten cleanly:\n%s", script)
+	}
+	WireClaude()
+	script2, _ := os.ReadFile(filepath.Join(home, ".claude", "statusline-command.sh"))
+	if string(script2) != string(script) {
+		t.Fatal("third wire changed the script (not idempotent)")
 	}
 }

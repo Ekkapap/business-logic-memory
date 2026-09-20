@@ -18,7 +18,7 @@ import (
 // scripts/tools.sh (macOS/Linux) และ scripts/tools.ps1 (Windows) ถือ logic ติดตั้ง/เริ่ม/หยุดทั้งหมด
 // (เจ้าของ 2026-09-09: logic ใหญ่ แยกเป็น script แล้วให้ blm_tools แค่เรียก) — ฝังใน binary จึงไม่ต้องมี repo บนเครื่องผู้ใช้
 //
-//go:embed scripts/tools.sh scripts/tools.ps1
+//go:embed scripts/tools.sh scripts/tools.ps1 scripts/statusline-command.sh
 var scripts embed.FS
 
 // ToolOpts ตัวเลือกของ `blm tools …` (CLI flags / MCP params ชุดเดียวกัน)
@@ -46,10 +46,15 @@ const ToolsHelp = `blm tools <action> [tool] [--docker | --local | --remote <hos
                             services on ANOTHER machine (e.g. a GPU box on your network): nothing is installed here — blm checks Ollama :11434 + Qdrant :6333
                             on that host (or --ollama-url / --qdrant-url for other ports), saves the values to .claude/blm.json, writes the
                             OLLAMA_*/QDRANT_*/EMBEDDING_* env for SocratiCode into ~/.claude/settings.json · next time: --remote alone reuses the saved values
-    socraticode             no flag: --remote when .claude/blm.json has a socraticode section, else --local
+    (both modes)            also wire Claude Code: hooks "blm hook session-start|prompt|grep-nudge" in ~/.claude/settings.json and the socraticode
+                            line at the end of ~/.claude/statusline-command.sh (file created from blm's default statusline when missing) — idempotent
+    socraticode             no flag: --local when nothing is configured · when .claude/blm.json already has a remote section blm stops and asks for --remote or --local
     socraticode --docker    Docker CLI (installed if missing) + images; SocratiCode manages the containers
     tree-sitter             ast-grep (tree-sitter engine) for blm_graph AST mode when no SocratiCode/graphify/Obsidian
     embedding               Ollama + nomic-embed-text for meaning (native, or --docker) — or let the agent do it
+  update socraticode        latest SocratiCode plugin: claude plugin marketplace update socraticode → claude plugin update socraticode@socraticode
+                            (the MCP itself runs "npx socraticode@latest", so the server code is already latest on every start; this refreshes the
+                            plugin skill/commands/hooks) · --remote/--local not needed: Ollama/Qdrant are updated where they run
   start|stop|restart [--docker] <tool>   (socraticode remote: nothing to start here — the services live on the other host)
   gen-graph                 graphify: how to build the graph (the build itself runs as /graphify inside Claude Code)
 
@@ -57,6 +62,7 @@ examples
   blm tools install socraticode --local
   blm tools install socraticode --remote 192.168.1.50 --embedding-model bge-m3 --embedding-dimensions 1024 --embedding-context-length 8192
   blm tools install socraticode --remote                       # reuse .claude/blm.json → rewrite ~/.claude/settings.json env
+  blm tools update socraticode                                 # latest plugin from the marketplace, then /plugin reconnect
   blm tools status socraticode`
 
 // Tools จัดการเครื่องมือช่วยวิเคราะห์: status | get | install | start | stop | restart | gen-graph | help
@@ -76,6 +82,24 @@ func Tools(root string, c Config, action, tool string, opts ToolOpts, out io.Wri
 			return "no tools configured (blm init … --tools socraticode,obsidian,graphify,tree-sitter,embedding)", nil
 		}
 		return Table([]string{"Tool", "State", "Detail"}, rows), nil
+	}
+	if action == "update" {
+		if tool != "socraticode" {
+			return "", fmt.Errorf("update is only implemented for socraticode (others: brew upgrade / pipx upgrade / the app's own updater)")
+		}
+		return toolsSocratiCodeUpdate(out)
+	}
+	// socraticode: ไม่ระบุโหมดแต่โปรเจ็คนี้จำ server ไว้ → หยุด ไม่เดา (เจ้าของ 2026-09-20: กันเผลอติดตั้ง local ทับ)
+	if tool == "socraticode" && action == "install" && !opts.Remote && !opts.Local && !opts.Docker && c.SocratiCode != nil {
+		return "", fmt.Errorf("%s\n%s\n\n%s\n%s\n\n%s\n%s\n\n%s\n\n%s",
+			Yellow("This project have socraticode remote at :"),
+			KV([][2]string{{"  " + Dim("LLM"), c.SocratiCode.OllamaURL}, {"  " + Dim("Qdrant"), c.SocratiCode.QdrantURL}}),
+			"To install socraticode remote run this :",
+			"  "+Cyan("blm tools install socraticode --remote"),
+			"To install socraticode local run this :",
+			"  "+Cyan("blm tools install socraticode --local"),
+			Dim("Note : Local installation will drops the remote section from "+ConfigFile+" and the EMBEDDING_* env"),
+			"Nothing changed")
 	}
 	// socraticode แบบ remote ไม่มี script ให้รัน — ทำใน Go ทั้งหมด (ping + config + env) ใช้ได้ทุก OS รวม Windows
 	if tool == "socraticode" && (opts.Remote || (!opts.Local && !opts.Docker && c.SocratiCode != nil)) {
@@ -105,7 +129,7 @@ func Tools(root string, c Config, action, tool string, opts ToolOpts, out io.Wri
 		action = "start"
 	case "install", "start", "stop":
 	default:
-		return "", fmt.Errorf("unknown action %q", action)
+		return "", fmt.Errorf("unknown action %q (status | get | install | update | start | stop | restart | gen-graph | help)", action)
 	}
 	envLines, err := RunToolScript(action, tool, mode, out)
 	if err != nil {
@@ -135,6 +159,12 @@ func Tools(root string, c Config, action, tool string, opts ToolOpts, out io.Wri
 			msg += "\n" + note
 		} else if err != nil {
 			msg += "\nenv: " + err.Error()
+		}
+	}
+	if action == "install" && tool == "socraticode" {
+		msg += "\n" + Section("Claude Code  "+Dim("hooks + statusline"))
+		for _, l := range WireClaude() {
+			msg += "\n  " + paintWireLine(l)
 		}
 	}
 	return msg, nil
@@ -247,14 +277,18 @@ func applyEnv(lines []string) (string, error) {
 	if err := os.WriteFile(file, append(raw, '\n'), 0o644); err != nil {
 		return "", fmt.Errorf("cannot write %s (%v) — set manually: %s", file, err, strings.Join(lines, " "))
 	}
-	var parts []string
-	if len(set) > 0 {
-		parts = append(parts, "set "+strings.Join(set, " "))
+	var rows [][2]string
+	for _, item := range set {
+		k, v, _ := strings.Cut(item, "=")
+		if v == "" {
+			v = Dim(`""`)
+		}
+		rows = append(rows, [2]string{"  " + Dim(k), v})
 	}
-	if len(del) > 0 {
-		parts = append(parts, "removed "+strings.Join(del, " "))
+	for _, k := range del {
+		rows = append(rows, [2]string{"  " + Dim(k), Dim("removed")})
 	}
-	return "env (~/.claude/settings.json): " + strings.Join(parts, " · ") + " — reconnect the socraticode MCP to apply", nil
+	return Section("Env  "+Dim("~/.claude/settings.json → reconnect the socraticode MCP to apply")) + "\n" + KV(rows), nil
 }
 
 // toolsSocratiCodeRemote — `blm tools install socraticode --remote …` และ get/start/stop/restart ของโหมดนั้น
@@ -307,31 +341,36 @@ func toolsSocratiCodeRemote(root string, c Config, action string, opts ToolOpts)
 		return "", fmt.Errorf("unknown action %q", action)
 	}
 
-	var lines []string
+	// ---- Services: ping ก่อน ล้ม = ไม่บันทึกอะไร
 	ok := true
-	if httpUp(sc.OllamaURL + "/api/tags") {
-		lines = append(lines, "ollama: up at "+sc.OllamaURL)
-		if sc.EmbeddingModel != "" {
-			if ollamaHasModel(sc.OllamaURL, sc.EmbeddingModel) {
-				lines = append(lines, "ollama: model "+sc.EmbeddingModel+" present")
-			} else {
-				ok = false
-				lines = append(lines, "ollama: model "+sc.EmbeddingModel+" NOT found on that host — run there: ollama pull "+sc.EmbeddingModel)
-			}
+	up := func(good bool) string {
+		if good {
+			return Green("✔ up")
 		}
-	} else {
 		ok = false
-		lines = append(lines, "ollama: no answer at "+sc.OllamaURL+"/api/tags (is it bound to that address? firewall? VPN up?)")
+		return Red("✘ down")
 	}
-	if httpUp(sc.QdrantURL + "/collections") {
-		lines = append(lines, "qdrant: up at "+sc.QdrantURL)
-	} else {
-		ok = false
-		lines = append(lines, "qdrant: no answer at "+sc.QdrantURL+"/collections")
+	ollamaOK := httpUp(sc.OllamaURL + "/api/tags")
+	ollamaRow := up(ollamaOK) + "   " + sc.OllamaURL
+	if ollamaOK && sc.EmbeddingModel != "" {
+		if ollamaHasModel(sc.OllamaURL, sc.EmbeddingModel) {
+			ollamaRow += "   " + Dim("model") + " " + sc.EmbeddingModel + " " + Green("✔")
+		} else {
+			ok = false
+			ollamaRow += "   " + Dim("model") + " " + sc.EmbeddingModel + " " + Red("✘ not found — run there: ollama pull "+sc.EmbeddingModel)
+		}
+	} else if !ollamaOK {
+		ollamaRow += "   " + Dim("(bound to that address? firewall? VPN up?)")
 	}
+	qdrantRow := up(httpUp(sc.QdrantURL+"/collections")) + "   " + sc.QdrantURL
+	var b strings.Builder
+	b.WriteString(Title("socraticode  " + Dim("remote — services stay on the other host, nothing installed here")))
+	b.WriteString("\n" + Section("Services") + "\n" + KV([][2]string{{"  Ollama", ollamaRow}, {"  Qdrant", qdrantRow}}))
 	if !ok {
-		return "", fmt.Errorf("%s\nsocraticode remote: fix the host first — nothing saved", strings.Join(lines, "\n"))
+		return "", fmt.Errorf("%s\n\n%s", b.String(), Red("fix the host first — nothing saved"))
 	}
+
+	// ---- Config
 	c.SocratiCode = &sc
 	if !containsStr(c.Tools, "socraticode") {
 		c.Tools = append(c.Tools, "socraticode")
@@ -339,17 +378,55 @@ func toolsSocratiCodeRemote(root string, c Config, action string, opts ToolOpts)
 	if err := c.Save(root); err != nil {
 		return "", fmt.Errorf("cannot write %s: %v", ConfigFile, err)
 	}
-	lines = append(lines, "config: socraticode section saved to "+ConfigFile)
+	show := func(v string) string {
+		if v == "" {
+			return Dim(`""`)
+		}
+		return v
+	}
+	b.WriteString("\n" + Section("Config  "+Dim(ConfigFile+" · socraticode section saved")) + "\n" + KV([][2]string{
+		{"  " + Dim("ollamaUrl"), sc.OllamaURL}, {"  " + Dim("qdrantUrl"), sc.QdrantURL},
+		{"  " + Dim("embeddingModel"), show(sc.EmbeddingModel)}, {"  " + Dim("embeddingDimensions"), show(sc.EmbeddingDimensions)}, {"  " + Dim("embeddingContextLength"), show(sc.EmbeddingContextLength)},
+		{"  " + Dim("embeddingQueryPrefix"), show(sc.EmbeddingQueryPrefix)}, {"  " + Dim("embeddingDocumentPrefix"), show(sc.EmbeddingDocumentPrefix)},
+	}))
+
+	// ---- Env
 	if note, err := applyEnv(sc.Env()); err != nil {
-		lines = append(lines, "env: "+err.Error())
+		b.WriteString("\n" + Section("Env") + "\n  " + Red(err.Error()))
 	} else {
-		lines = append(lines, note)
+		b.WriteString("\n" + note)
+	}
+
+	// ---- Claude Code wiring
+	b.WriteString("\n" + Section("Claude Code  "+Dim("hooks + statusline")))
+	for _, l := range WireClaude() {
+		b.WriteString("\n  " + paintWireLine(l))
 	}
 	if !socratiCodePluginInstalled() {
-		lines = append(lines, "socraticode: Claude plugin not found — install it: claude plugin marketplace add giancarloerra/socraticode && claude plugin install socraticode@socraticode")
+		b.WriteString("\n  " + Yellow("note:") + " Claude plugin not found — claude plugin marketplace add giancarloerra/socraticode && claude plugin install socraticode@socraticode")
 	}
-	lines = append(lines, "socraticode: remote stack ready — reconnect the plugin (/plugin → socraticode) then codebase_health should show both external, and codebase_index if the collection is new")
-	return strings.Join(lines, "\n"), nil
+
+	// ---- Next
+	b.WriteString("\n" + Section("Next") + "\n" + KV([][2]string{
+		{"  1", "/plugin → reconnect " + Cyan("socraticode") + " " + Dim("(env is read at MCP start)")},
+		{"  2", Cyan("codebase_health") + " → both external, model available"},
+		{"  3", Cyan("codebase_index") + " " + Dim("only if this project's collection does not exist on that Qdrant yet")},
+	}))
+	return b.String(), nil
+}
+
+// paintWireLine สีของบรรทัดจาก WireClaude: note = เหลือง, cannot = แดง, ที่เหลือ label dim
+func paintWireLine(l string) string {
+	switch {
+	case strings.HasPrefix(l, "note:"):
+		return Yellow("note:") + strings.TrimPrefix(l, "note:")
+	case strings.Contains(l, "cannot"):
+		return Red(l)
+	}
+	if k, v, ok := strings.Cut(l, ": "); ok {
+		return Dim(k+":") + " " + v
+	}
+	return l
 }
 
 // ollamaHasModel — GET /api/tags มี model ชื่อนี้ไหม (`bge-m3` ตรงกับ `bge-m3:latest`)
@@ -379,4 +456,58 @@ func ollamaHasModel(base, model string) bool {
 func socratiCodePluginInstalled() bool {
 	home, _ := os.UserHomeDir()
 	return home != "" && latestDir(filepath.Join(home, ".claude", "plugins", "cache", "socraticode", "socraticode")) != ""
+}
+
+// toolsSocratiCodeUpdate — `blm tools update socraticode`: plugin ล่าสุดจาก marketplace ของ socraticode
+// ตัว MCP ของมันรันด้วย `npx -y --prefer-online socraticode@latest` (.mcp.json ของ plugin) จึงเป็นโค้ดล่าสุดทุกครั้งที่ start อยู่แล้ว
+// ที่ต้อง update จริงคือ plugin (skill/commands/hooks ใน ~/.claude/plugins/cache) — ผ่าน `claude plugin …` เท่านั้น ไม่แตะ cache เอง
+func toolsSocratiCodeUpdate(out io.Writer) (string, error) {
+	if _, err := exec.LookPath("claude"); err != nil {
+		return "", fmt.Errorf("`claude` not on PATH — update by hand inside Claude Code: /plugin → socraticode → update")
+	}
+	before := socratiCodePluginVersion()
+	run := func(args ...string) (string, error) {
+		cmd := exec.Command("claude", args...)
+		raw, err := cmd.CombinedOutput()
+		text := strings.TrimSpace(string(raw))
+		if out != nil && text != "" {
+			fmt.Fprintln(out, Dim("$ claude "+strings.Join(args, " ")))
+			fmt.Fprintln(out, text)
+		}
+		return text, err
+	}
+	var b strings.Builder
+	b.WriteString(Title("socraticode  " + Dim("update plugin")))
+	b.WriteString("\n" + Section("Steps"))
+	if _, err := run("plugin", "marketplace", "update", "socraticode"); err != nil {
+		b.WriteString("\n  " + Red("✘") + " marketplace update failed: " + err.Error())
+	} else {
+		b.WriteString("\n  " + Green("✔") + " marketplace refreshed " + Dim("(giancarloerra/socraticode)"))
+	}
+	if _, err := run("plugin", "update", "socraticode@socraticode"); err != nil {
+		if before == "" {
+			return "", fmt.Errorf("%s\n  %s plugin not installed — run: claude plugin marketplace add giancarloerra/socraticode && claude plugin install socraticode@socraticode", b.String(), Red("✘"))
+		}
+		return "", fmt.Errorf("%s\n  %s plugin update failed: %v", b.String(), Red("✘"), err)
+	}
+	after := socratiCodePluginVersion()
+	switch {
+	case before == after:
+		b.WriteString("\n  " + Green("✔") + " plugin already latest " + Dim(after))
+	default:
+		b.WriteString("\n  " + Green("✔") + " plugin " + Dim(before) + " → " + after)
+	}
+	b.WriteString("\n" + Section("Next") + "\n" + KV([][2]string{
+		{"  1", "/plugin → reconnect " + Cyan("socraticode") + " " + Dim("(or restart Claude Code — the MCP runs npx socraticode@latest on start)")},
+		{"  2", Cyan("codebase_health") + " " + Dim("· Ollama/Qdrant are not touched: update them where they run (server: ollama / qdrant binaries)")},
+	}))
+	return b.String(), nil
+}
+
+func socratiCodePluginVersion() string {
+	home, _ := os.UserHomeDir()
+	if home == "" {
+		return ""
+	}
+	return latestDir(filepath.Join(home, ".claude", "plugins", "cache", "socraticode", "socraticode"))
 }

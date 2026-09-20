@@ -5,7 +5,8 @@ $ErrorActionPreference = "Stop"
 $repo = "Ekkapap/business-logic-memory"
 Write-Host "blm: run this inside the project you want blm to remember (current: $PWD)"
 $arch = if ([Environment]::Is64BitOperatingSystem) { "amd64" } else { "386" }
-$binDir = if ($env:BLM_BIN_DIR) { $env:BLM_BIN_DIR } else { Join-Path $env:LOCALAPPDATA "blm" }
+# ที่อยู่มาตรฐาน: ~\.blm\bin\blm.exe (blm self-update แทนไฟล์นี้) — blm path เติมโฟลเดอร์นี้ลง PATH (User)
+$binDir = if ($env:BLM_BIN_DIR) { $env:BLM_BIN_DIR } elseif ($env:BLM_HOME) { Join-Path $env:BLM_HOME "bin" } else { Join-Path $env:USERPROFILE ".blm\bin" }
 New-Item -ItemType Directory -Force -Path $binDir | Out-Null
 $zip = Join-Path $env:TEMP "blm.zip"
 $url = "https://github.com/$repo/releases/latest/download/blm_windows_$arch.zip"

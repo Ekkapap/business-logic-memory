@@ -247,7 +247,7 @@ func TestLinkPathsEverywhere(t *testing.T) {
 	in := "## Gate\n- ดู `src/lib/db.ts` แล้ว session ไม่แตะ (src/lib/sso/*).\nmemory: line-login, other, [old.md](<../memory/features/old.md>)\ncode: src/lib/db.ts, src/lib/sso/*, missing/file.ts\n"
 	got := s.linkPaths(in)
 	for _, want := range []string{
-		"- ดู `[db.ts](src/lib/db.ts)` แล้ว session ไม่แตะ ([src/lib/sso/](src/lib/sso/)).",
+		"- ดู [db.ts](src/lib/db.ts) แล้ว session ไม่แตะ ([src/lib/sso/](src/lib/sso/)).",
 		"memory: [line-login.md](.agentsroom/memory/features/line-login.md), other, [old.md](.agentsroom/memory/features/old.md)",
 		"code: [db.ts](src/lib/db.ts), [src/lib/sso/](src/lib/sso/), missing/file.ts",
 	} {

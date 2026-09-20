@@ -94,6 +94,8 @@ func (s *Store) Rules(query, trigger string) RulesResult {
 		res.Message = "local edits in " + res.Source + " not synced to the backend yet (blm_sync {apply:true} when the owner confirms)"
 	}
 	all := SplitBlocks(body, offset, res.Source, path)
+	// blm.md เป็นสารบัญ: แถว Main Business ที่ลิงก์โน้ตหัวข้อ → โหลด block ของโน้ตนั้นต่อท้าย (topics.go)
+	all = append(all, s.topicBlocks(body)...)
 	q := strings.ToLower(strings.TrimSpace(query))
 	for _, b := range all {
 		res.Headings = append(res.Headings, b.Topic+" › "+b.Heading)
@@ -185,7 +187,7 @@ func (s *Store) TopicCount() (topics, rules int) {
 	}
 	_, off, body := splitFront(string(raw))
 	seen := map[string]bool{}
-	for _, b := range SplitBlocks(body, off, "", "") {
+	for _, b := range append(SplitBlocks(body, off, "", ""), s.topicBlocks(body)...) {
 		if b.Topic != "" && !seen[b.Topic] {
 			seen[b.Topic] = true
 			topics++

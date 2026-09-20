@@ -6,12 +6,15 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Ekkapap/business-logic-memory/internal/blm"
 	"github.com/Ekkapap/business-logic-memory/internal/cli"
@@ -25,15 +28,20 @@ const usage = `blm <command> [args]
   status [--json]                 readiness, paths, rules, temp notes, tools, stats
   scan [path] [--json]            survey the repo: sizes, token estimate, sub-projects (candidate main topics)
   graph [query] [--rebuild] [--html]   built-in code graph: hubs, folder clusters, who-imports/calls-whom; --html writes <store>/graph.html
+  search "<question>" [--limit N=10] [--lang typescript] [--file <path>] [--exclude md] [--full | --brief] [--json]
+  search --get <search-id> [--id 1,3] [--context N]
+                                  semantic search over the SocratiCode index (Thai or English) without its MCP: embeds with the index's model, hybrid dense+BM25
+                                  RRF like codebase_search · answer = one-line table of contents per hit (#id score path:lines preview) + search-id, then
+                                  --get opens the chunks you pick (real file lines) · .md under the blm store and .agentsroom/ always dropped, --exclude md drops every .md
   grep "<term1> <term2> ..." [--path <dir> | --file <file>] [--max-line N=20] [--max-result N=10] [--ext .md,.ts,...] [--sc] [--json]
-                                  search terms in files: case-insensitive substring match per term · --sc uses SocratiCode if available · --json for machine output
+                                  search terms in files: case-insensitive substring match per term · --sc asks blm search first for candidate files · --json for machine output
   cat --grep-id <id> [--result-id <n,m>] [--context N=3] [--json]
                                   read grep result file and display hits with context
   report [name] [--json]          latest report
   tools <action> [tool] [--docker | --local | --remote <host> [--embedding-model m --embedding-dimensions n --embedding-context-length n]]
-                                  status|get|install|start|stop|restart|gen-graph|help · tools: socraticode|obsidian|graphify|tree-sitter|embedding
+                                  status|get|install|update|start|stop|restart|gen-graph|help · tools: socraticode|obsidian|graphify|tree-sitter|embedding
                                   socraticode --local = Qdrant+Ollama on this machine (as before) · --remote <host> = use a server that already runs them,
-                                  saved to .claude/blm.json + ~/.claude/settings.json env · no flag = remote if saved, else local · "blm tools help" for examples
+                                  saved to .claude/blm.json + ~/.claude/settings.json env · no flag = local, or stop-and-ask when a remote is saved · "blm tools help" for examples
   sync --push|--pull [--apply] [--parallel] [--author a] [--role r] [--delete a,b]   plan, or with --apply push to AgentsRoom one by one (--parallel = all at once)
   diff <name> · merge <name> mine|cloud|content [file]   see what changed on the cloud vs your draft, then resolve
   conflicts [<id>] [-i] [--all]   waiting conflicts, one per block with its report path · <id> prints the report · -i pick → read → decide (c/i) · --all includes done
@@ -42,9 +50,125 @@ const usage = `blm <command> [args]
   resolve <name> [--keep current|incoming] [--no-push]  apply the decision, then push the note so the backend equals local (--no-push to skip)
   get <name> · create <name> <file|-> [--target t] [--mode m] [--folder f] [--description d] · append <name> <file|-> · patch <name> <find> <replace> · replace <name> <file|-> [--confirm] · delete <name>
   path                            add the blm folder to the user's PATH (prints the command if it cannot)
+  update ["<topic>"] [--limit N=10] [--html [--from <json>]] [--json] · update draft ["<topic>"]   what blm.md covers and what it does not: topics + dirs their code: lines cover · graph clusters no rule refers to ·
+                                  files changed since the newest rule · with a topic: blm search hits to start reading — the report /blm_update starts from (no LLM)
+  self-update [--check] [--binary | --plugin] [--json]   update blm itself (also: blm --self-update): binary (dev checkout → git pull + go build · global → latest GitHub release) + plugin (claude plugin update blm@blm)
   guard                           PreToolUse hook: reads JSON on stdin, denies Bash writes inside the store
+  hook session-start|prompt|post-edit|grep-nudge   one Claude Code hook for everything (JSON on stdin → additionalContext): core business logic of blm.md
+                                  at session start (incl. after compaction) and, debounced (BLM_CORE_INTERVAL min, default 20), before a prompt / after edits;
+                                  top-3 index pointers per prompt; a nudge after Grep/Glob · wired by "blm tools install socraticode" or see "blm hook --help"
+  statusline [--top-only]         Claude Code statusline: socraticode : online · N nodes / M edges · ✓ synced|⟳ indexing (+ ctx% / session line unless --top-only)
   mcp                             MCP server (stdio) — the Claude Code plugin runs this
   version`
+
+const updateReportHelp = `blm update ["<topic>"] — หัวข้อหลักใหม่ควรเป็นอะไร (หลัง /blm_init ผ่านไปสักพัก) · MCP: blm_update · slash: /blm:blm_update
+ไม่ scan ทั้งโปรเจ็ค ไม่ใช้ LLM — รายงานเดียวกันทั้ง CLI และ MCP
+
+  blm update                   หัวข้อที่มี (โน้ต, block, updated_at เก่าสุด, โฟลเดอร์ที่ code: อ้าง) · cluster ในกราฟที่ไม่มีกฎอ้าง = ผู้สมัคร ·
+                               ไฟล์ที่เปลี่ยนหลังกฎล่าสุด (git log, เฉพาะไฟล์ที่ index) แยก "no rule" / "covered — rule may be stale"
+  blm update "line webhook"    + ผลค้น blm search ของหัวข้อนั้น (สารบัญ + search-id → blm search --get <id> --id n)
+  --limit N                    จำนวนผู้สมัคร/ผลค้น (10) · --json ผลเป็น JSON
+
+  blm update [topic] --html    รายงานเดียวกันเป็นหน้า review: <store>/reviews/review-<id>.json + .html ที่ http://127.0.0.1:<port>/r/<id>
+                               ติ๊ก ref → New topic (หลายหัวข้อ) → ปุ่ม "blm topic create" = submit · ทุกคลิก (ติ๊ก, comment+บันทึก, agree, draft)
+                               ลงไฟล์ทันที แต่สถานะหลักเปลี่ยนและ agent ถูกเรียกเมื่อ submit รวมเท่านั้น · CLI รอจน submit แล้วจบ (--no-wait ไม่รอ)
+  blm update --html --from <json>   เปิดรีวิวเดิม (gen HTML ใหม่จากไฟล์ + server) — ใช้ต่อรอบ 2+ หลัง agent ใส่ข้อเสนอ หรือเมื่อ server ปิดไป
+  blm update draft ["topic"]   จุดที่ยัง DRAFT ในทุกรีวิว (ชื่อ/ความหมายของ main/sub topic) เพื่อกลับมาทำต่อ
+  blm update --wait [--from <json|id>] [--timeout 240]   รอจนเจ้าของทำอะไรในหน้ารีวิว (แชท/comment/agree/แถวใหม่/submit) หรือกด "จบ live" แล้วพิมพ์ todo
+                               agent รันเป็น background ของ Claude Code → ถูกเรียกกลับเมื่อจบ ไม่ต้องวน blm_update wait ใน MCP
+
+ความหมายและหัวข้อย่อยเป็นของคน: เลือกผู้สมัครแล้วสั่ง /blm_update "<ชื่อ>" ใน Claude Code ให้ agent ร่างและรอคุณยืนยัน
+(อัปเดตตัว blm เอง = blm self-update)`
+
+const updateHelp = `blm self-update — อัปเดต blm เอง (binary + plugin) · MCP: blm_selfupdate · slash: /blm:blm_selfupdate
+(รับ blm --self-update ด้วย · blm update = รายงานความครอบคลุมของ blm.md ไม่ใช่คำสั่งนี้)
+
+  blm self-update              binary + plugin
+  blm self-update --check      ดูว่ามีเวอร์ชันใหม่ไหม ไม่เปลี่ยนอะไร
+  blm self-update --binary     เฉพาะ binary · --plugin เฉพาะ plugin · --json ผลเป็น JSON
+
+binary:  dev install (ไฟล์ที่รันอยู่ใน checkout ของ repo) → git pull --ff-only + go build ลงที่เดิม
+         global install (install.sh / release) → ดาวน์โหลด blm_<os>_<arch> จาก GitHub Releases ล่าสุดแล้วแทนไฟล์
+plugin:  claude plugin marketplace update blm → claude plugin update blm@blm
+หลังอัปเดต: /mcp reconnect plugin:blm:blm (MCP ที่รันอยู่ยังใช้ binary เก่าจนกว่าจะ reconnect) — คำสั่งถูก copy ลง clipboard ให้บน mac`
+
+const searchHelp = `blm search — ค้นหาความหมายผ่าน index ของ SocratiCode (ไม่ต้องผ่าน MCP ของมัน)
+
+รูปแบบ:
+  blm search "<คำถาม ไทยหรืออังกฤษ>" [--limit N=10] [--lang <label>] [--file <path>] [--exclude md] [--full | --brief] [--min-score 0.10] [--json]
+  blm search --get <search-id> [--id 1,3] [--context N=0]      เปิด chunk ที่เลือกจากสารบัญ (บรรทัดจริงจากไฟล์ ± context)
+
+ผลลัพธ์ = สารบัญ 1 บรรทัดต่อผล: #id · score · path:Lstart-Lend · [lang] · preview  แล้วปิดท้าย search-id
+  → อยากอ่านตัวไหน: blm search --get <search-id> --id 2     (MCP: blm_search {get:"<search-id>", ids:[2]})
+  → --full = แนบเนื้อทุก chunk ทีเดียว (แบบ codebase_search เดิม) · --brief = pointer ล้วน ไม่บันทึกไฟล์ผล (hook ใช้)
+
+ทำอะไร:
+  1. embed คำถามด้วยโมเดล+prefix เดียวกับที่ index ใช้ (อ่านจาก .claude/blm.json section socraticode → env → ~/.claude/settings.json)
+  2. Qdrant hybrid: dense (ความหมาย) + BM25 (คำตรง) รวมด้วย RRF — คะแนน 1.0 = อันดับ 1 ทั้งสองฝั่ง, 0.5 = อันดับ 1 ฝั่งเดียว (สเกลเดียวกับ codebase_search)
+  3. กรอง: .md ใต้ store ของ blm และใต้ .agentsroom/ (mirror memory) ตัดออกเสมอ · --exclude md ตัด .md ทั้งโปรเจ็ค
+
+ตัวเลือก:
+  --limit N         จำนวนผลสูงสุด (ค่าเริ่มต้น 10)
+  --lang <label>    เฉพาะภาษา ตาม label ของ socraticode: typescript (= .ts+.tsx) · go · php · python · markdown · sql · json …
+  --file <path>     เฉพาะไฟล์นี้ (relative path ตรงตัว)
+  --exclude md      ตัด .md ทุกที่ (ค่าเริ่มต้นตัดเฉพาะของ blm/.agentsroom)
+  --full            แนบเนื้อ chunk ทุกผลใน response · --brief pointer ล้วน ไม่บันทึกไฟล์ผล
+  --no-trust        ข้ามคอลัมน์ origin (ประหยัด 1 embed request)
+
+คอลัมน์ origin — ความน่าเชื่อถือของแต่ละผล (blm วิเคราะห์เอง socraticode ไม่มี): แยก chunk เป็นโค้ด/คอมเมนต์ แล้ว embed ทั้งสองส่วน
+  code        คำถามชนโค้ดโดยตรง → เชื่อได้
+  both ✓      ชนทั้งโค้ดและคอมเมนต์ และสองส่วนไปทางเดียวกัน (cosine ≥ 0.60) → เชื่อได้เต็มที่
+  both        ชนทั้งคู่ แต่คอมเมนต์กับโค้ดไม่ค่อยตรงกัน
+  comment ~   ชนแต่คอมเมนต์ แต่คอมเมนต์เล่าเรื่องเดียวกับโค้ด
+  comment ⚠   ชนแต่คอมเมนต์ และโค้ดพูดอีกเรื่อง → คอมเมนต์อาจเก่า อ่านโค้ดก่อนเชื่อ
+  ตัวเลขท้ายป้าย = cosine(code, comment) ของก้อนนั้น
+  --get <id> --id n,m --context N   เปิด chunk จากผลก่อนหน้า (ไฟล์ <store>/tmp/search-result-<id>.json)
+  --min-score X     ตัดผลต่ำกว่า X (ค่าเริ่มต้น 0.10 เท่า SEARCH_MIN_SCORE ของ socraticode)
+  --json            ผลลัพธ์ JSON
+
+ตัวอย่าง:
+  blm search "เข้าสู่ระบบด้วย LINE ต้องกรอก OTP อีกไหม" --lang typescript
+  blm search "cookie consent policy version" --exclude md --limit 5 --brief
+
+ต้องมี: stack ของ SocratiCode ออนไลน์ (blm tools status socraticode) และโปรเจ็คถูก index แล้ว (codebase_index ผ่าน plugin socraticode)`
+
+const hookHelp = `blm hook <event> · blm statusline — hook กลางตัวเดียวของ Claude Code: ฉีดแก่น business logic (blm.md) + สถานะ/pointer จาก SocratiCode index
+
+  blm hook session-start    core brief ของ blm.md (ทุก source: startup/resume/clear/compact — หลัง auto-compact บริบทกลับมาที่นี่) + สถานะ index
+  blm hook prompt           ก่อนลงมือ: core brief เมื่อพ้น debounce + prompt ≥ 12 ตัวอักษร → pointer 3 บรรทัด (path:Lstart-Lend score) ไม่แนบโค้ด
+  blm hook post-edit        หลัง Write/Edit: core brief เมื่อพ้น debounce เท่านั้น (agent แก้ไฟล์รัว ๆ ไม่โดนฉีดทุกครั้ง)
+  blm hook grep-nudge       หลัง Grep/Glob → เตือนว่ามี index
+
+core brief = ตาราง Main Business (หัวข้อ+ความหมาย) + รายชื่อ rule block + กติกา 3 ข้อ จาก blm.md ใน store — ไม่ใช่ทั้งไฟล์
+debounce: ฉีดซ้ำเมื่อพ้น BLM_CORE_INTERVAL นาที (ค่าเริ่มต้น 20) หรือ blm.md เปลี่ยน · session-start ฉีดเสมอ · สถานะต่อ session ที่ $TMPDIR/blm-hook-<session_id>.json
+  blm statusline [--top-only]   socraticode : online · N nodes / M edges · ✓ synced|⟳ indexing  (+ ▸ ctx N% · session: xxxxxxxx)
+                            --top-only = บรรทัดบนอย่างเดียว ใช้เมื่อ include จาก statusline หลักที่แสดง ctx อยู่แล้ว
+
+ทุก event รับ JSON ทาง stdin ตามที่ Claude Code ส่ง (session_id, cwd, prompt, tool_name, tool_input, context_window) · โปรเจ็ค = CLAUDE_PROJECT_DIR หรือ cwd
+stack ปิด / ไม่มี index / error = เงียบ (exit 0) hook ไม่ทำให้ session พัง · ผล status แคช 10 วิใน temp
+
+ต่อสายใน ~/.claude/settings.json (ระดับเครื่อง ใช้ทุกโปรเจ็ค):
+  "hooks": {
+    "SessionStart":     [ { "hooks": [ { "type": "command", "command": "blm hook session-start", "timeout": 8000 } ] } ],
+    "UserPromptSubmit": [ { "hooks": [ { "type": "command", "command": "blm hook prompt", "timeout": 15000 } ] } ],
+    "PostToolUse":      [ { "matcher": "Grep|Glob", "hooks": [ { "type": "command", "command": "blm hook grep-nudge", "timeout": 8000 } ] },
+                          { "matcher": "Write|Edit|MultiEdit", "hooks": [ { "type": "command", "command": "blm hook post-edit", "timeout": 8000 } ] } ]
+  }
+statusline: ต่อท้าย ~/.claude/statusline-command.sh ด้วย
+  sc=$(echo "$input" | blm statusline --top-only 2>/dev/null); [ -n "$sc" ] && printf '\n%s' "$sc"
+หรือชี้ "statusLine": { "type": "command", "command": "blm statusline" } ตรง ๆ`
+
+const reviewHelp = `blm review — ไฟล์ใน store ของ blm (.agentsroom/blm/**: review json/html ฯลฯ) ผ่านโปรเซส blm — ทางเดียวเมื่อ sandbox ของ Bash ห้ามเขียนที่นั่น
+
+  blm review get <id> [--select <path>]      พิมพ์ json ของ review (id 8 ตัว เช่น 980fe083) · --select = เฉพาะจุด: topics[id=nws6d].subs · items[id=c2].chat · topics.status
+  blm review list [<folder>]                 รายชื่อไฟล์ในโฟลเดอร์ของ store (ไม่ใส่ = ตัว store)
+  blm review read <path>                     พิมพ์เนื้อหาไฟล์ใด ๆ ใน store
+  blm review write <path|id> [--file <src>]  เขียนทั้งไฟล์ (เนื้อหาจาก --file หรือ stdin)
+  blm review set <path|id> --select <node> --value <json>   แก้จุดเดียว (value เป็น JSON: "open" · 3 · true · null=ลบ · {...})
+  blm review patch <path> --line N [--end M | --insert] [--file <src>]  แทนบรรทัด N–M ด้วยเนื้อหาจาก --file/stdin · --insert = แทรกก่อน N
+  blm review delete <path|id> [--confirm <name>] ไม่มี --confirm = ไม่ลบ แค่บอกให้ไปถามเจ้าของก่อน · ลบ = ย้ายไป <store>/.trash/ กู้คืนได้
+path = id ของ review · relative ต่อ store · หรือต่อโปรเจ็ค · นอก store = ปฏิเสธ · ทุกครั้งจด <store>/commands.log
+`
 
 const grepHelp = `blm grep — ค้นหาคำศัพท์ในไฟล์
 
@@ -108,7 +232,21 @@ func main() {
 	if fi, err := os.Stdout.Stat(); err == nil && fi.Mode()&os.ModeCharDevice != 0 && os.Getenv("NO_COLOR") == "" && (runtime.GOOS != "windows" || os.Getenv("WT_SESSION") != "") {
 		blm.Color = true // ANSI เฉพาะ terminal จริง (Windows: เฉพาะ Windows Terminal) · MCP/pipe = plain
 	}
-	if err := run(cmd, args); err != nil {
+	err := run(cmd, args)
+	// ท้ายผลลัพธ์เมื่อถูก pipe (= agent เรียกจาก Bash) บอก by · related · next เหมือน MCP tool (เจ้าของ 2026-09-21) · terminal จริงไม่พิมพ์
+	if !blm.Color && cmd != "mcp" && cmd != "hook" && cmd != "statusline" && cmd != "guard" {
+		if cmd == "update" && len(args) > 0 && args[0] != "draft" {
+			for _, a := range args {
+				if a == "--wait" { // RenderWait มี trailer ของตัวเองแล้ว
+					cmd = ""
+				}
+			}
+		}
+		if cmd != "" {
+			fmt.Println(mcp.Trailer("blm_" + strings.ReplaceAll(cmd, "-", "_"))[1:])
+		}
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
@@ -138,6 +276,26 @@ func run(cmd string, args []string) error {
 	case "path":
 		fmt.Println(cli.EnsurePath())
 		return nil
+	case "self-update", "--self-update":
+		flags, _ := splitFlags(args)
+		if flags["help"] != "" || flags["h"] != "" {
+			fmt.Println(updateHelp)
+			return nil
+		}
+		r, err := blm.SelfUpdate(blm.SelfUpdateOpts{Check: flags["check"] != "", Binary: flags["binary"] != "", Plugin: flags["plugin"] != ""}, os.Stdout)
+		if err != nil {
+			return err
+		}
+		if flags["json"] != "" {
+			out, _ := json.MarshalIndent(r, "", "  ")
+			fmt.Println(string(out))
+			return nil
+		}
+		fmt.Println(r.Terminal)
+		if r.Reconnect {
+			_ = exec.Command("sh", "-c", `printf "/mcp reconnect plugin:blm:blm" | pbcopy 2>/dev/null`).Run()
+		}
+		return nil
 	case "version", "--version", "-v":
 		fmt.Println("blm", blm.Version)
 		return nil
@@ -158,8 +316,12 @@ func run(cmd string, args []string) error {
 			fmt.Println(catHelp)
 			return nil
 		}
+		if cmd == "update" {
+			fmt.Println(updateReportHelp)
+			return nil
+		}
 	}
-	if _, err := os.Stat(filepath.Join(root, blm.ConfigFile)); err != nil && cmd != "init" && cmd != "version" && cmd != "path" && cmd != "guard" && cmd != "mcp" && cmd != "grep" && cmd != "cat" {
+	if _, err := os.Stat(filepath.Join(root, blm.ConfigFile)); err != nil && cmd != "init" && cmd != "version" && cmd != "path" && cmd != "guard" && cmd != "hook" && cmd != "statusline" && cmd != "mcp" && cmd != "grep" && cmd != "cat" && cmd != "self-update" && cmd != "--self-update" {
 		return fmt.Errorf("no %s here (%s) — run blm inside the project folder, e.g. cd <project> && blm %s", blm.ConfigFile, root, cmd)
 	}
 	srv := mcp.New(root)
@@ -171,6 +333,79 @@ func run(cmd string, args []string) error {
 	switch cmd {
 	case "status":
 		res, err = srv.Call("blm_status", nil2map(nil))
+	case "update":
+		a := map[string]any{}
+		if len(rest) > 0 && rest[0] == "draft" {
+			a["draft"] = true
+			rest = rest[1:]
+		}
+		if len(rest) > 0 {
+			a["topic"] = strings.Join(rest, " ")
+		}
+		if n, err := strconv.Atoi(flags["limit"]); err == nil {
+			a["limit"] = float64(n)
+		}
+		if flags["wait"] != "" {
+			// background ของ Claude Code: บล็อกจนมีงานใหม่ในรีวิว (แชท/comment/แถวใหม่/submit) หรือเจ้าของกด "จบ live" แล้วจบ → agent ถูกเรียกกลับพร้อม todo
+			ref := flags["from"]
+			if ref == "" {
+				for _, rv := range blm.Open(root, blm.Load(root)).ListReviews() {
+					if rv.Status != "done" {
+						ref = rv.ID
+						break
+					}
+				}
+			}
+			if ref == "" {
+				return fmt.Errorf("no open review — blm update --html first")
+			}
+			sec := 240
+			if n, err := strconv.Atoi(flags["timeout"]); err == nil && n > 0 {
+				sec = n
+			}
+			w, err := blm.Open(root, blm.Load(root)).WaitViaServer(ref, time.Duration(sec)*time.Second)
+			if err != nil {
+				return err
+			}
+			if asJSON {
+				out, _ := json.MarshalIndent(w, "", "  ")
+				fmt.Println(string(out))
+				return nil
+			}
+			fmt.Print(blm.RenderWait(w))
+			return nil
+		}
+		if from := flags["from"]; from != "" {
+			// ไฟล์เดิม → gen HTML ใหม่ + server รอ submit (ทุก event เรียกทางนี้)
+			var r *blm.ReviewOpenResult
+			if r, err = blm.Open(root, blm.Load(root)).ReopenReview(from); err == nil {
+				res = r
+			}
+		} else if flags["html"] != "" || flags["to"] != "" {
+			a["html"] = true
+			if flags["open"] != "" {
+				a["open"] = true
+			}
+			res, err = srv.Call("blm_update", a)
+		} else {
+			res, err = srv.Call("blm_update", a)
+		}
+		if r, ok := res.(*blm.ReviewOpenResult); ok && err == nil {
+			if asJSON {
+				break
+			}
+			fmt.Print(r.Terminal)
+			if e := blm.OpenBrowser(r.URL); e != nil {
+				fmt.Println(blm.Yellow("could not open a browser: " + e.Error() + " — open " + r.URL + " yourself"))
+			}
+			if flags["no-wait"] == "" {
+				fmt.Println(blm.Dim("waiting for the submit in the browser… (Ctrl-C to stop; every click is already saved to " + r.File + ")"))
+				if blm.Open(root, blm.Load(root)).WaitSubmit(r.ID, 0) {
+					fmt.Println(blm.Green("submitted") + " → " + r.File + "\n" + blm.Cyan("next: ") + "/blm_update in Claude Code (the prompt hook also points the agent at it)")
+				}
+			}
+			return nil
+		}
 	case "graph":
 		a := map[string]any{"rebuild": flags["rebuild"] != "", "html": flags["html"] != ""}
 		if len(rest) > 0 {
@@ -319,6 +554,72 @@ func run(cmd string, args []string) error {
 			return fmt.Errorf("blm patch <name> <find> <replace>")
 		}
 		res, err = srv.Call("blm_patch", map[string]any{"name": rest[0], "find": rest[1], "replace": rest[2]})
+	case "search":
+		if flags["help"] != "" || flags["h"] != "" {
+			fmt.Println(searchHelp)
+			return nil
+		}
+		if g := flags["get"]; g != "" {
+			a := map[string]any{"get": g}
+			if v := flags["id"]; v != "" {
+				a["ids"] = v
+			}
+			if v := flags["context"]; v != "" {
+				a["context"] = toNum(v, 0)
+			}
+			res, err = srv.Call("blm_search", a)
+			break
+		}
+		if len(rest) < 1 {
+			return fmt.Errorf("blm search \"<question>\" [--limit N] [--lang typescript] [--file p] [--exclude md] [--full | --brief] [--json]  ·  blm search --get <search-id> [--id 1,3] [--context N]")
+		}
+		a := map[string]any{"query": strings.Join(rest, " "), "brief": flags["brief"] != "", "full": flags["full"] != "", "noTrust": flags["no-trust"] != "", "excludeMd": flags["exclude"] == "md" || flags["exclude-md"] != ""}
+		if v := flags["limit"]; v != "" {
+			a["limit"] = toNum(v, 10)
+		}
+		if v := flags["lang"]; v != "" {
+			a["lang"] = v
+		}
+		if v := flags["file"]; v != "" {
+			a["file"] = v
+		}
+		if v := flags["min-score"]; v != "" {
+			if f, err := strconv.ParseFloat(v, 64); err == nil {
+				a["minScore"] = f
+			}
+		}
+		res, err = srv.Call("blm_search", a)
+	case "hook":
+		if flags["help"] != "" || flags["h"] != "" || len(rest) < 1 {
+			os.Stdout.WriteString(hookHelp + "\n")
+			return nil
+		}
+		hookRoot := os.Getenv("CLAUDE_PROJECT_DIR")
+		in := blm.ReadHookInput(os.Stdin)
+		if hookRoot == "" {
+			hookRoot = in.Cwd
+		}
+		if hookRoot == "" {
+			hookRoot = root
+		}
+		// hook ห้ามล้ม: error = เงียบ exit 0
+		_ = blm.Hook(rest[0], in, hookRoot, os.Stdout)
+		return nil
+	case "statusline":
+		if flags["help"] != "" || flags["h"] != "" {
+			os.Stdout.WriteString(hookHelp + "\n")
+			return nil
+		}
+		in := blm.ReadHookInput(os.Stdin)
+		slRoot := os.Getenv("CLAUDE_PROJECT_DIR")
+		if slRoot == "" {
+			slRoot = in.Cwd
+		}
+		if slRoot == "" {
+			slRoot = root
+		}
+		fmt.Print(blm.Statusline(in, slRoot, flags["top-only"] != ""))
+		return nil
 	case "grep":
 		if flags["help"] != "" || flags["h"] != "" {
 			fmt.Println(grepHelp)
@@ -357,6 +658,67 @@ func run(cmd string, args []string) error {
 			a["imports"] = true
 		}
 		res, err = srv.Call("blm_grep", a)
+	case "review":
+		if flags["help"] != "" || flags["h"] != "" || len(rest) < 1 || (rest[0] != "list" && len(rest) < 2) {
+			fmt.Print(reviewHelp)
+			return nil
+		}
+		o := blm.CommandOpts{Action: rest[0], Path: ".", Confirm: flags["confirm"], Select: flags["select"]}
+		if o.Action == "patch" {
+			o.Line, _ = strconv.Atoi(flags["line"])
+			o.EndLine, _ = strconv.Atoi(flags["end"])
+			o.Insert = flags["insert"] != ""
+			if flags["file"] != "" {
+				raw, err := os.ReadFile(flags["file"])
+				if err != nil {
+					return err
+				}
+				o.Content = string(raw)
+			} else {
+				raw, _ := io.ReadAll(os.Stdin)
+				o.Content = string(raw)
+			}
+		}
+		if o.Action == "set" {
+			if v, ok := flags["value"]; !ok {
+				return fmt.Errorf("blm review set <path|id> --select <node> --value <json>")
+			} else if err := json.Unmarshal([]byte(v), &o.Value); err != nil {
+				o.Value = v // ไม่ใช่ JSON = string ตรง ๆ
+			}
+		}
+		if len(rest) > 1 {
+			o.Path = rest[1]
+		}
+		if o.Action == "write" {
+			if flags["file"] != "" {
+				raw, err := os.ReadFile(flags["file"])
+				if err != nil {
+					return err
+				}
+				o.Content = string(raw)
+			} else {
+				raw, _ := io.ReadAll(os.Stdin)
+				o.Content = string(raw)
+			}
+		}
+		r, err := blm.Open(root, blm.Load(root)).Command(o)
+		if err != nil {
+			return err
+		}
+		if o.Action == "read" || o.Action == "get" {
+			if o.Select != "" {
+				raw, _ := json.MarshalIndent(r.Data, "", "  ")
+				fmt.Println(string(raw))
+				return nil
+			}
+			fmt.Print(r.Content)
+			return nil
+		}
+		if o.Action == "list" {
+			fmt.Println(strings.Join(r.Files, "\n"))
+			return nil
+		}
+		res = r
 	case "cat":
 		if flags["help"] != "" || flags["h"] != "" {
 			fmt.Println(catHelp)
@@ -388,6 +750,18 @@ func run(cmd string, args []string) error {
 			}
 			return nil
 		}
+	}
+	if r, ok := res.(*blm.SearchResult); ok && !asJSON {
+		fmt.Println(r.Terminal)
+		return nil
+	}
+	if r, ok := res.(*blm.UpdateReport); ok && !asJSON {
+		fmt.Print(r.Terminal)
+		return nil
+	}
+	if r, ok := res.(*blm.DraftsResult); ok && !asJSON {
+		fmt.Print(r.Terminal)
+		return nil
 	}
 	if r, ok := res.(*blm.Report); ok && !asJSON {
 		fmt.Print(r.Content)
@@ -690,7 +1064,7 @@ func splitFlags(args []string) (map[string]string, []string) {
 		switch k {
 		case "json", "push", "pull", "docker", "apply", "parallel", "rebuild", "html", "i", "interactive", "all", "no-push", "confirm", "sc", "imports", "help", "h":
 			flags[k] = "1"
-		case "local":
+		case "local", "brief", "top-only", "exclude-md", "check", "binary", "plugin", "full", "no-trust":
 			flags[k] = "1"
 		default:
 			// ค่าถัดไปเป็น flag อีกตัว (เช่น `--remote --embedding-model …`) = flag นี้ไม่มีค่า

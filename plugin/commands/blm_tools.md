@@ -1,5 +1,5 @@
 ---
-description: จัดการเครื่องมือข้างเคียง socraticode | obsidian | graphify | tree-sitter | embedding — status · get · install · start · stop · restart · gen-graph · socraticode ติดตั้งได้สองแบบ --local (บนเครื่องนี้) / --remote <host> (ชี้ server ที่มี Ollama+Qdrant แล้ว)
+description: จัดการเครื่องมือข้างเคียง socraticode | obsidian | graphify | tree-sitter | embedding — status · get · install · update · start · stop · restart · gen-graph · socraticode ติดตั้งได้สองแบบ --local (บนเครื่องนี้) / --remote <host> (ชี้ server ที่มี Ollama+Qdrant แล้ว)
 argument-hint: <action> [tool] [--local | --remote <host> --embedding-model m --embedding-dimensions n --embedding-context-length n | --docker]  เช่น "status" · "install socraticode --local" · "install socraticode --remote 192.168.1.50 --embedding-model bge-m3 --embedding-dimensions 1024 --embedding-context-length 8192" · "restart obsidian"
 ---
 

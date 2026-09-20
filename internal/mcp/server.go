@@ -55,7 +55,7 @@ func tools(c blm.Config) []tool {
 		"topic": str(""), "heading": str(""), "result": enum("", "PASSED", "NOT PASSED", "UNKNOWN"), "ref": str("block.refShort e.g. .agentsroom/blm/blm.md:29"),
 	}, "topic", "heading", "result", "ref")}
 	all := []tool{
-		{"blm", "Read the project's current business rules (blm.md — the single source of truth, changed only by the owner). No query = whole file · a word/heading = grep, returns the whole block of every matching subtopic with its main topic. Also reports which blocks changed since the last read and whether temp drafts are waiting for confirmation. Call it yourself whenever memory conflicts with code.",
+		{"blm", "Read the project's current business rules (blm.md — the single source of truth, changed only by the owner; when its Main Business table links topic notes blm-<topic>.md their blocks are loaded too, ref points at that file). No query = whole file · a word/heading = grep, returns the whole block of every matching subtopic with its main topic. Also reports which blocks changed since the last read and whether temp drafts are waiting for confirmation. Call it yourself whenever memory conflicts with code.",
 			obj(map[string]any{"query": str("word or heading to search (omit = whole file)"), "trigger": enum("who asked: user (via /blm) or agent on its own (default) — recorded in stats", "user", "agent")})},
 		{"blm_get", "Read one temp note in full", obj(map[string]any{"name": noteProps["name"]}, "name")},
 		{"blm_create", "Create a NEW note in blm/ (refuses if the name exists). Jot what should reach the memory backend at the end of the session here instead of calling memory_save mid-task. mode = how it lands on push: append (a section for an existing backend note) or replace (a whole new note, description required).", obj(noteProps, "name", "content")},
@@ -69,6 +69,21 @@ func tools(c blm.Config) []tool {
 			obj(map[string]any{"name": noteProps["name"], "keep": enum("", "mine", "cloud", "content"), "content": str("merged body when keep=content")}, "name", "keep")},
 		{"blm_graph", "Repo graph, cached in <store>/graph.json. Source order: SocratiCode's graph in Qdrant when the project is indexed (resolved imports + calls, all languages) → tree-sitter (ast-grep, `blm tools install tree-sitter`) from real AST: imports, definitions and cross-file calls; without it a coarse regex fallback (imports only, marked engine=regex). hubs = most imported/called files, clusters per folder with top symbols, query = find files/symbols matching a word with neighbours (who imports/calls whom). Meaning is not in the graph: install `embedding` (Ollama) or infer it yourself.",
 			obj(map[string]any{"query": str("word to look up (symbol or path); omit = summary"), "path": str("sub path to build from (omit = whole project)"), "rebuild": map[string]any{"type": "boolean", "description": "rebuild graph.json even if cached"}, "html": map[string]any{"type": "boolean", "description": "also write <store>/graph.html — an interactive force graph to open in a browser"}, "limit": map[string]any{"type": "number"}})},
+		{"blm_search", "Semantic search over the SocratiCode index without its MCP (Thai or English question). Embeds the query with the same model/prefix the index used (.claude/blm.json socraticode section → env), then Qdrant hybrid dense+BM25 RRF exactly like codebase_search — score 1.0 = rank 1 on both sides, 0.5 = rank 1 on one. Answer = a table of contents: one line per hit (#id · score · path:Lstart-Lend · origin · preview) + searchId. origin tells how far to trust the hit: code = the query matched the code itself · both ✓ = code and comment matched and agree · comment ⚠ = only a comment matched and its code says something else (stale comment — read the code before believing it); then call again with {get: searchId, ids:[…]} to read only the chunks you need (real file lines, ± context) — cheaper than full:true which inlines every chunk. .md under the blm store and .agentsroom/ are always dropped (notes, memory mirror); excludeMd drops every .md. Use this FIRST for \"where is / how does\" questions, before grep. Needs the stack online and the project indexed.",
+			obj(map[string]any{
+				"query":     str("natural-language question (required unless get)"),
+				"get":       str("searchId of a previous result — returns the chosen chunks with real file lines"),
+				"ids":       str("with get: comma-separated hit ids (default all)"),
+				"context":   map[string]any{"type": "number", "description": "with get: extra lines before/after each chunk (default 0)"},
+				"full":      map[string]any{"type": "boolean", "description": "inline every chunk body in the answer (default: table of contents only)"},
+				"noTrust":   map[string]any{"type": "boolean", "description": "skip the origin column (code / both ✓ / comment ⚠ — whether the query hit the code or only a comment, and whether comment and code agree)"},
+				"limit":     map[string]any{"type": "number", "description": "max hits (default 10)"},
+				"lang":      str("only this language label: typescript (= .ts+.tsx) · go · php · python · markdown · sql …"),
+				"file":      str("only this relative path (exact)"),
+				"excludeMd": map[string]any{"type": "boolean", "description": "drop every .md (default: only blm store + .agentsroom/)"},
+				"brief":     map[string]any{"type": "boolean", "description": "pointers only (path:Lstart-Lend score), no chunk content"},
+				"minScore":  map[string]any{"type": "number", "description": "drop hits below (default 0.10)"},
+			})},
 		{"blm_grep", "ค้นหาคำศัพท์ในไฟล์: การจับคู่สตริงย่อย case-insensitive ต่อคำ คืน hit array พร้อม path, บรรทัด, snippet start/end, text. Scope: file (ไฟล์เดียว) หรือ path (recursive directory, ค่าเริ่มต้น = current). Window: walk ไปหา empty line ก่อนหน้า/ถัดไป (หรือ boundary); ถ้า window > maxLine ให้ clamp เป็น ±maxLine/2 รอบ hit line. Extensions: allowlist .md .txt .ts .tsx .js .jsx .php .sql .sh .go; ext override ด้วย comma-separated extensions. Concurrency: parallel term × file scan ด้วย 4 workers. sc: ใช้ SocratiCode semantic search สำหรับ candidate files (fallback ไป regular scan ถ้า unreachable). imports: รวมบรรทัด import/export/require เป็นค่าเริ่มต้นปิด (default false)",
 			obj(map[string]any{
 				"terms":     str("space-separated search terms (required)"),
@@ -86,7 +101,7 @@ func tools(c blm.Config) []tool {
 				"resultId": str("comma-separated hit IDs (default = all)"),
 				"context":  num("lines before/after hit (default 3)"),
 			}, "grepId")},
-		{"blm_conflict", "Two actions. action:report (default) writes a report the OWNER decides on (Current/Incoming; tick, blm conflicts -i, or blm resolve --keep) and touches nothing else. (1) Real clash: pass name (the note) — one report per overlapping region. (2) Proposal to change blm.md (during /blm_init or when a rule should change): pass content (the whole proposed block for topic › heading; existing or new subtopic), name may be omitted. action:mark puts [Conflict](<report>) marks into blm.md (memory line / heading of that topic) and into the clashing notes for every waiting report — the only step that edits files; resolve removes them. Write reason/content in the owner's language (Thai here).",
+		{"blm_conflict", "Two actions. action:report (default) writes a report the OWNER decides on (Current/Incoming; tick, blm conflicts -i, or blm resolve --keep) and touches nothing else. (1) Real clash: pass name (the note) — one report per overlapping region. (2) Proposal to change a rule (during /blm_init or when a rule should change): pass content (the whole proposed block for topic › heading; existing or new subtopic), name may be omitted — a topic already split into its own note blm-<topic> (linked from the Main Business table) gets the report on that note (resolve with that name). action:mark puts [Conflict](<report>) marks into blm.md (memory line / heading of that topic / the topic's table row) and into the clashing notes for every waiting report — the only step that edits files; resolve removes them. Write reason/content in the owner's language (Thai here).",
 			obj(map[string]any{"name": noteProps["name"], "topic": str("main topic (e.g. Authentication)"), "heading": str("subtopic heading exactly as in blm.md (e.g. LINE Login (delegated MFA))"), "reason": str("why you could not decide — what each side claims"), "content": str("proposal mode: the whole proposed block (rules, memory:/code:/verify:/updated_at lines; leading '## heading' optional)"), "action": enum("report (default) = write the report only · mark = tag blm.md and the notes for all waiting reports", "report", "mark")})},
 		{"blm_restore", "Restore a note in blm/ from a file in history/ (every save/update/patch/delete snapshots the previous version there). Without history: list the history files of that note, newest first. The current version is snapshotted before it is overwritten.",
 			obj(map[string]any{"name": noteProps["name"], "history": str("history file name, e.g. blm-plugin-[update]-20260909-070159.md (omit = list)")}, "name")},
@@ -104,11 +119,32 @@ func tools(c blm.Config) []tool {
 				"trigger": enum("", "user", "agent"),
 				"content": str("save a free-form report (whole markdown) instead of composing from rows"),
 			})},
+		{"blm_update", "What blm.md covers and what it does not — the starting point of /blm_update (add a main topic months after /blm_init) without re-scanning the project and without an LLM: existing topics (note, blocks, oldest updated_at, dirs their code: lines refer to) · candidates = graph clusters no rule refers to (files, symbols, hub symbols, files changed since) · files changed since the newest rule (git log, indexed files only; 'no rule' vs 'covered — rule may be stale') · with topic: the blm_search table of contents for it (searchId → blm_search {get}). Meaning and subtopics are yours to write: read the hits, then blm_create blm-<slug> (folder = blm_status.topicFolder) + a row in the Main Business table. Same report as `blm update` in the terminal.",
+			obj(map[string]any{
+				"topic":      str("candidate main topic to look into (omit = only the coverage report)"),
+				"limit":      map[string]any{"type": "number", "description": "max candidates / search hits (default 10)"},
+				"open":       map[string]any{"type": "boolean", "description": "with html: open the standing page (/r/update) in the owner's browser from the blm process — use this, never `open` from Bash (sandboxed)"},
+				"html":       map[string]any{"type": "boolean", "description": "review mode: turn the report into <store>/reviews/review-<id>.json + .html served at a local URL where the owner ticks refs, presses New topic, comments/agrees/drafts every point and submits. Returns url/file — tell the owner the url, then wait for the submit (the prompt hook tells you when it arrived, or read it with from)."},
+				"from":       str("review file (path or id) to read — marks it read and returns the whole state: items the owner ticked, topics (status new = owner named it, you propose), every point's action (COMMENT/AGREE/DRAFT) and comment, history of earlier proposals"),
+				"proposal":   map[string]any{"type": "object", "description": "with from: your proposal written into the same file — PARTIAL: send only what changes (existing id + the fields/subs you touch; name/desc empty = unchanged; subs not sent stay; drop:[subId] removes) — {topics:[{id (existing) or none (new), name, desc (≤150 chars cue), subs:[{id (keep existing), name, desc, refs:[item ids you used (c2, g1…) and the file paths you actually read]}], note?}]}. Always fill subs[].refs — the owner checks each subtopic against what they ticked. Owner chats on rows (items[].chat) and comments on topic points (a chat too: id \"<topic>:name\" · \"<topic>:desc\" · \"<topic>:sub:<sid>:name|desc\") are answered with answers:[{id, answer, summary?}] — before a chat is closed one message must be marked as its summary (who said/agreed what): when you wrap up, send the summary with summary:true or ask the owner to press ★ — read the files/rules behind that row before answering; a proposal may carry answers only. Unchanged text keeps its AGREE; changed text moves the old one to history and clears the action. Re-renders the HTML; the owner reviews again. Do not touch points that are AGREE unless the owner commented."},
+				"draft":      map[string]any{"type": "boolean", "description": "list every point still DRAFT across reviews (topic narrows) — what `blm update draft` prints"},
+				"full":       map[string]any{"type": "boolean", "description": "with from/wait: return the whole review object (default = compact: id/file/url/round/status, todo with the threads to answer, next, topic ids — fetch any node with blm_review {action:get, select})"},
+				"wait":       map[string]any{"type": "boolean", "description": "live mode (with from): block until the owner saves something that needs you — an ask, a COMMENT, a new/updated topic row, or a submit — or presses 'จบ live', or timeoutSec passes. Returns the same as from plus stopped/timeout; while you then work the page shows 'agent typing' until your proposal/answers land. Loop: answer the todo with blm_update {from, proposal}, then call wait again; stop when stopped:true or the owner tells you in chat."},
+				"timeoutSec": map[string]any{"type": "number", "description": "with wait: seconds to block (default 240, max 540)"},
+			})},
+		{"blm_selfupdate", "Update blm itself: the binary (dev checkout → git pull + go build; global install → latest GitHub release replaces the file) and the Claude Code plugin (claude plugin marketplace update blm → claude plugin update blm@blm). check:true only reports what is available. Returns terminal + binaryUpdated/pluginUpdated/reconnect — when reconnect is true tell the owner to run /mcp reconnect plugin:blm:blm (this MCP keeps the old binary until then). Never retry on failure; report it.",
+			obj(map[string]any{
+				"check":  map[string]any{"type": "boolean", "description": "only look up the latest version, change nothing"},
+				"binary": map[string]any{"type": "boolean", "description": "only the binary (default: binary + plugin)"},
+				"plugin": map[string]any{"type": "boolean", "description": "only the plugin (default: binary + plugin)"},
+			})},
+		{"blm_review", "Files of the blm store (.agentsroom/blm/**: review json/html, ignore.json, last-update.json) through the blm process — the only way when the Bash sandbox refuses to write there (reopen a review wrongly marked done, drop an empty review file a bug created). Actions: get (review by id → its json) · list (folder, \".\" = the store) · read (any store file) · write (whole file) · set (change ONE node: {select, value} — the rest of the file never passes through your context; prefer it over read+write) · patch (replace a line range {line, endLine, content} — for .md/.html/anything; same idea) · delete — delete without confirm never deletes: it returns needConfirm; ask the owner in chat, then call again with confirm:<file name>; deleted files go to <store>/.trash/ (recoverable). Every call is logged in <store>/commands.log. Paths outside the store are refused.",
+			obj(map[string]any{"action": enum("", "get", "list", "read", "write", "set", "patch", "delete"), "path": str("review id (980fe083) · path relative to the store (reviews/review-<id>.json) or to the project · folder for list"), "content": str("write: the whole new content"), "confirm": str("delete: the exact file name the owner confirmed"), "line": map[string]any{"type": "number", "description": "patch: first line (1-based) to replace — take start/end from blm_grep / blm_search hits"}, "endLine": map[string]any{"type": "number", "description": "patch: last line inclusive (default = line)"}, "insert": map[string]any{"type": "boolean", "description": "patch: insert content before line, delete nothing (line = count+1 appends)"}, "value": map[string]any{"description": "set: the new value for the node select points at (string/number/bool/object/array) · null = remove that key / array element · select ending in [+] appends to that array"}, "select": str("get/read: return only this node; set: the node to replace of the JSON instead of the whole file — topics · topics[0].subs · topics[id=nws6d].name · items[kind=candidate].label · items[id=c2].chat · topics.status (field of every element) · negative index ok")}, "action", "path")},
 		{"blm_stat", "Record one stat event (summary in blm_status): lookup = owner could not remember, agent searched the rules {query} · override = owner changed a rule after confirming {topic, note?} · fixed = how many NOT PASSED of the last check the agent corrected on its own from the rules file {count}",
 			obj(map[string]any{"event": enum("", "lookup", "override", "fixed"), "query": str(""), "topic": str(""), "note": str(""), "count": map[string]any{"type": "number"}}, "event")},
 		{"blm_tools", "Manage neighbour tools (socraticode | obsidian | graphify): status · get · install · start · stop · restart · gen-graph · help — acts when it knows the command, otherwise returns the command for the user to run",
 			obj(map[string]any{
-				"action": enum("", "status", "get", "install", "start", "stop", "restart", "gen-graph", "help"), "tool": enum("", "socraticode", "obsidian", "graphify", "tree-sitter", "embedding"),
+				"action": enum("", "status", "get", "install", "update", "start", "stop", "restart", "gen-graph", "help"), "tool": enum("", "socraticode", "obsidian", "graphify", "tree-sitter", "embedding"),
 				"docker":    map[string]any{"type": "boolean", "description": "socraticode/embedding: Qdrant + Ollama in Docker instead of native"},
 				"local":     map[string]any{"type": "boolean", "description": "socraticode: install Qdrant + Ollama on THIS machine (the original mode)"},
 				"remote":    map[string]any{"type": "string", "description": "socraticode: host of a server that already runs Ollama :11434 + Qdrant :6333 (nothing installed here; saved to .claude/blm.json; env written to ~/.claude/settings.json) · \"config\" = reuse the saved values"},
@@ -148,6 +184,115 @@ func New(root string) *Server {
 	cfg := blm.Load(root)
 	return &Server{root: root, cfg: cfg, store: blm.Open(root, cfg), tools: tools(cfg)}
 }
+
+// trailer — ท้ายผลลัพธ์ทุก tool: by · related · next (เจ้าของ 2026-09-21: prompt inject ทางอ้อม ให้ agent รู้ว่างานแบบนี้ใช้คำสั่งไหนต่อ ไม่หันไป grep/Read/Write เอง)
+var toolHints = map[string][2]string{ // name → {related, next}
+	"blm":           {"blm_search, blm_conflict", "code contradicts a rule → stop and report · rule change → blm_conflict"},
+	"blm_get":       {"blm_patch, blm_append", "edit one place → blm_patch {find, replace} (never blm_replace for a small change)"},
+	"blm_create":    {"blm_status, blm_sync", "more sections → blm_append · owner says 'update memory' → blm_sync {apply:true}"},
+	"blm_append":    {"blm_patch, blm_status", "owner says 'update memory' → blm_sync {apply:true}"},
+	"blm_patch":     {"blm_get, blm_diff", "verify with blm_get only if the find was ambiguous"},
+	"blm_search":    {"blm_grep, blm_cat, blm_graph", "read hits → blm_search {get, ids} · exact term → blm_grep · line numbers → blm_review patch {line, endLine}"},
+	"blm_grep":      {"blm_cat, blm_search", "context of a hit → blm_cat {grepId, resultId} · change those lines → blm_review patch {path, line, endLine, content}"},
+	"blm_cat":       {"blm_grep, blm_review", "edit the lines you just read → blm_review patch (store files) or Edit (code)"},
+	"blm_graph":     {"blm_search, blm_update", "read a symbol → blm_search {query} · new topic from a cluster → blm_update {html:true}"},
+	"blm_update":    {"blm_review, blm_create, blm_append", "todo → answer with blm_update {from, proposal} · a node of the file → blm_review get {select} · then blm_update {from, wait:true}"},
+	"blm_review":    {"blm_update, blm_grep", "change one node → set {select, value} · lines → patch · delete needs the owner's confirm"},
+	"blm_conflict":  {"blm_conflicts, blm_resolve", "owner decides → blm_resolve"},
+	"blm_conflicts": {"blm_resolve, blm_conflict", "owner decided → blm_resolve"},
+	"blm_status":    {"blm_sync, blm_update", "drafts pending → blm_sync {apply:true} when the owner says so"},
+	"blm_sync":      {"blm_status", "errors → report, do not retry"},
+	"blm_tools":     {"blm_status", ""},
+}
+
+// Trailer — CLI ใช้ด้วย (blm <cmd> ที่ถูก pipe)
+func Trailer(name string) string {
+	t := "\n— by " + name
+	if h, ok := toolHints[name]; ok {
+		if h[0] != "" {
+			t += " · related: " + h[0]
+		}
+		if h[1] != "" {
+			t += " · next: " + h[1]
+		}
+	}
+	return t
+}
+
+// leanJSON — ผลลัพธ์ที่ส่งให้ agent (เจ้าของ 2026-09-21: lean ทั้ง code/ui/ผลลัพธ์): ตัด "terminal" (ข้อความที่ CLI พิมพ์ = ข้อมูลเดียวกับ
+// ฟิลด์โครงสร้างซ้ำอีกรอบ) และฟิลด์ว่าง/ศูนย์ที่ omitempty ไม่ได้ตัดให้ — ไม่ indent (JSON ที่ indent กินโทเคนเพิ่ม ~30% โดยไม่ให้ข้อมูล)
+func leanJSON(res any) string {
+	raw, _ := json.Marshal(res)
+	var v any
+	if json.Unmarshal(raw, &v) != nil {
+		return string(raw)
+	}
+	if m, ok := v.(map[string]any); ok {
+		delete(m, "terminal")
+		prune(m)
+	}
+	out, _ := json.Marshal(v)
+	return string(out)
+}
+
+func prune(v any) {
+	switch x := v.(type) {
+	case map[string]any:
+		for k, e := range x {
+			switch t := e.(type) {
+			case nil:
+				delete(x, k)
+			case string:
+				if t == "" {
+					delete(x, k)
+				}
+			case bool:
+				if !t {
+					delete(x, k)
+				}
+			case float64:
+				if t == 0 {
+					delete(x, k)
+				}
+			case []any:
+				if len(t) == 0 {
+					delete(x, k)
+				} else {
+					prune(t)
+				}
+			case map[string]any:
+				if len(t) == 0 {
+					delete(x, k)
+				} else {
+					prune(t)
+				}
+			}
+		}
+	case []any:
+		for _, e := range x {
+			prune(e)
+		}
+	}
+}
+
+// compactRound — คำตอบของ blm_update {from}/{wait} แบบย่อ (เจ้าของ 2026-09-21: ลด cost ของการรีวิว): ไม่ส่ง review ทั้งก้อน
+// todo มี thread/ข้อความที่ต้องตอบอยู่แล้ว · ต้องการจุดอื่น → blm_review {action:"get", path:<id>, select:"topics[id=…]"} · full:true = ทั้งก้อน
+func compactRound(rr *blm.ReviewRoundResult) map[string]any {
+	out := map[string]any{"todo": rr.Todo, "next": rr.Next}
+	if r := rr.Review; r != nil {
+		out["id"], out["file"], out["url"], out["round"], out["status"] = r.ID, r.File, r.URL, r.Round, r.Status
+		var topics []map[string]any
+		for _, t := range r.Topics {
+			if t.Status != "created" {
+				topics = append(topics, map[string]any{"id": t.ID, "name": t.Name.Text, "status": t.Status})
+			}
+		}
+		out["topics"] = topics
+	}
+	return out
+}
+
+func numOf(a map[string]any, k string) float64 { f, _ := a[k].(float64); return f }
 
 func getStr(a map[string]any, k string) string {
 	s, _ := a[k].(string)
@@ -238,6 +383,30 @@ func (s *Server) Call(name string, a map[string]any) (any, error) {
 			res["hint"] = "coarse regex mode — no tree-sitter on this machine. Ask the owner: `blm tools install tree-sitter` (ast-grep) for a real AST + call graph; for meaning either `blm tools install embedding` (Ollama, native or --docker) or infer meaning yourself from the code you read"
 		}
 		return res, nil
+	case "blm_search":
+		if g := getStr(a, "get"); g != "" {
+			ids, err := blm.ParseResultIDs(getStr(a, "ids"))
+			if err != nil {
+				return nil, err
+			}
+			ctx := 0
+			if v, ok := a["context"].(float64); ok {
+				ctx = int(v)
+			}
+			return blm.SearchGet(s.root, g, ids, ctx)
+		}
+		o := blm.SearchOpts{Query: getStr(a, "query"), Lang: getStr(a, "lang"), File: getStr(a, "file")}
+		o.Full, _ = a["full"].(bool)
+		o.NoTrust, _ = a["noTrust"].(bool)
+		if v, ok := a["limit"].(float64); ok {
+			o.Limit = int(v)
+		}
+		if v, ok := a["minScore"].(float64); ok {
+			o.MinScore = v
+		}
+		o.ExcludeMD, _ = a["excludeMd"].(bool)
+		o.Brief, _ = a["brief"].(bool)
+		return blm.Search(s.root, s.cfg, o)
 	case "blm_grep":
 		terms := strings.Fields(getStr(a, "terms"))
 		maxLine := 20
@@ -365,6 +534,67 @@ func (s *Server) Call(name string, a map[string]any) (any, error) {
 			return r, nil
 		}
 		return map[string]any{"ok": false, "message": "no reports yet in " + s.cfg.Store + "/reports/"}, nil
+	case "blm_update":
+		limit, _ := a["limit"].(float64)
+		if d, _ := a["draft"].(bool); d {
+			return s.store.DraftsResult(getStr(a, "topic"))
+		}
+		if from := getStr(a, "from"); from != "" {
+			if w, _ := a["wait"].(bool); w {
+				sec, _ := a["timeoutSec"].(float64)
+				if sec <= 0 {
+					sec = 240
+				}
+				if sec > 540 {
+					sec = 540
+				}
+				w, err := s.store.WaitReview(from, time.Duration(sec)*time.Second)
+				if err != nil {
+					return nil, err
+				}
+				if full, _ := a["full"].(bool); full {
+					return w, nil
+				}
+				out := compactRound(w.ReviewRoundResult)
+				out["stopped"], out["timeout"], out["waited"] = w.Stopped, w.Timeout, w.Waited
+				return out, nil
+			}
+			rr, err := s.store.ReviewRound(from, a["proposal"])
+			if err != nil {
+				return nil, err
+			}
+			if full, _ := a["full"].(bool); full {
+				return rr, nil
+			}
+			return compactRound(rr), nil
+		}
+		rep, err := s.store.UpdateReport(getStr(a, "topic"), int(limit))
+		if err != nil {
+			return nil, err
+		}
+		if h, _ := a["html"].(bool); h {
+			o, err := s.store.OpenUpdateReview(rep)
+			if err == nil && a["open"] == true { // เปิดเบราว์เซอร์ให้เจ้าของจากโปรเซสนี้ (นอก sandbox)
+				stable := o.URL
+				if i := strings.LastIndex(stable, "/r/"); i > 0 {
+					stable = stable[:i] + "/r/update"
+				}
+				if e := blm.OpenBrowser(stable); e != nil {
+					o.Next += " · could not open a browser (" + e.Error() + ") — tell the owner to open " + stable
+				} else {
+					o.Next += " · browser opened at " + stable
+				}
+			}
+			return o, err
+		}
+		return rep, nil
+	case "blm_selfupdate":
+		check, _ := a["check"].(bool)
+		bin, _ := a["binary"].(bool)
+		plug, _ := a["plugin"].(bool)
+		return blm.SelfUpdate(blm.SelfUpdateOpts{Check: check, Binary: bin, Plugin: plug}, nil)
+	case "blm_review":
+		return s.store.Command(blm.CommandOpts{Action: getStr(a, "action"), Path: getStr(a, "path"), Content: getStr(a, "content"), Confirm: getStr(a, "confirm"), Select: getStr(a, "select"), Value: a["value"], Line: int(numOf(a, "line")), EndLine: int(numOf(a, "endLine")), Insert: a["insert"] == true})
 	case "blm_stat":
 		ev := map[string]any{"event": getStr(a, "event")}
 		switch ev["event"] {
@@ -635,8 +865,8 @@ func (s *Server) Serve(in io.Reader, out io.Writer) {
 				send(msg.ID, map[string]any{"content": []map[string]any{{"type": "text", "text": err.Error()}}, "isError": true}, nil)
 				continue
 			}
-			text, _ := json.MarshalIndent(res, "", "  ")
-			send(msg.ID, map[string]any{"content": []map[string]any{{"type": "text", "text": string(text)}}}, nil)
+			// ท้ายผลลัพธ์บอกว่ามาจาก tool ไหน (เจ้าของ 2026-09-21: prompt inject ทางอ้อม ให้ agent จำว่างานแบบนี้ใช้คำสั่งเดิม)
+			send(msg.ID, map[string]any{"content": []map[string]any{{"type": "text", "text": leanJSON(res) + Trailer(msg.Params.Name)}}}, nil)
 		default:
 			send(msg.ID, nil, map[string]any{"code": -32601, "message": "method not found: " + msg.Method})
 		}

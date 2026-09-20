@@ -24,8 +24,8 @@ argument-hint: [path ย่อยที่จะวิเคราะห์ — 
    updated_by: <เจ้าของ>
    <กฎเป็นประโยคบอกเล่า 1–5 บรรทัด>
    ```
-5. ประกอบไฟล์: frontmatter (`target: blm`, `mode: replace`, description "Contains …") → `# วิธีอ่าน` → `## Main Business` ตาราง (หัวข้อ | ความหมาย | จำนวนกฎ) → `# <หัวข้อหลัก>` แต่ละหัวข้อกับ block ย่อย → `# ข้อสงสัย` (สิ่งที่เจ้าของยังไม่ตอบ)
-   ไฟล์ใหม่: `blm_create { name: "blm", target: "blm", mode: "replace", description, folder: "global/conventions", content }` · มี blm.md อยู่แล้ว: เสนอทีละ block ด้วย `blm_conflict {topic, heading, reason, content}` ให้เจ้าของตัดสิน ห้ามเขียนทับทั้งไฟล์
+5. ประกอบไฟล์ — **blm.md เป็นสารบัญ, กฎอยู่ไฟล์ละหัวข้อ** (เจ้าของกำหนด 2026-09-20): blm.md = frontmatter (`target: blm`, `mode: replace`, description "Contains …") → `# วิธีอ่าน` → `## Main Business` ตาราง `| [หัวข้อ](<topicFolder>/blm-<slug>.md) | ความหมาย ≤150 ตัวอักษร |` → `# ข้อสงสัย` (สิ่งที่เจ้าของยังไม่ตอบ) · แต่ละหัวข้อหลัก = โน้ต `blm-<slug>` (`# หัวข้อ` แล้ว block ย่อยตามข้อ 4) description = ความหมายเดียวกับในตาราง · topicFolder ดูจาก `blm_status` (`topicFolder`; agentsroom = `global/conventions/blm`, อื่น = `blm`)
+   ไฟล์ใหม่: `blm_create { name: "blm-<slug>", mode: "replace", folder: <topicFolder>, description, content }` ต่อหัวข้อ แล้ว `blm_create { name: "blm", target: "blm", mode: "replace", description, folder: "global/conventions", content }` · มี blm.md อยู่แล้ว: เสนอทีละ block ด้วย `blm_conflict {topic, heading, reason, content}` ให้เจ้าของตัดสิน (ลงโน้ตหัวข้อเองเมื่อหัวข้อนั้นแยกไฟล์แล้ว) ห้ามเขียนทับทั้งไฟล์ · หัวข้อหลักใหม่ในโหมดปรับปรุง = `blm_create blm-<slug>` + `blm_patch` เพิ่มแถวในตาราง
    - backend none/obsidian: ไฟล์นี้คือของจริงทันที · agentsroom/custom: เป็นร่าง บอกเจ้าของว่าสั่ง "update memory" เมื่อพร้อม แล้ว `blm_sync`
 6. ปิดด้วย `blm_status` แล้วบอกจำนวนหัวข้อหลัก/ย่อย และวิธีใช้ต่อ: `/blm` ตอนเริ่มวัน · `blm status` ใน terminal
 

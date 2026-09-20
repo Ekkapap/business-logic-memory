@@ -4,26 +4,29 @@ LD = -X github.com/Ekkapap/business-logic-memory/internal/blm.Version=$(VERSION)
 
 build:      ## bin/blm สำหรับเครื่องนี้
 	go build -ldflags "$(LD)" -o bin/blm ./cmd/blm
-# สองแบบ (เจ้าของกำหนด 2026-09-09):
-#   make install          = local  : build ./bin/blm ใน repo แล้วให้ ~/.local/bin/blm เป็น symlink มาที่นี่ — agent ที่ sandbox เขียน ~/.local/bin ไม่ได้ก็ build เองได้
-#   make install-global   = global : build ไปแทนที่ ~/.local/bin/blm ตรง ๆ (แบบเดิม ไม่พึ่ง repo)
-install: install-local
-install-local:    ## ./bin/blm + symlink ~/.local/bin/blm → ./bin/blm
+# การติดตั้ง (เจ้าของกำหนด 2026-09-20): repo นี้ไว้ dev/commit เท่านั้น ตัวที่ใช้จริงอยู่ที่ ~/.blm/bin/blm เหมือนทุกเครื่อง (install.sh ลงที่เดียวกัน)
+#   make install      = global : build → ~/.blm/bin/blm แล้ว ~/.local/bin/blm เป็น symlink ไปที่นั่น — `blm self-update` จะแทนไฟล์ใน ~/.blm/bin
+#   make install-dev  = dev    : build ./bin/blm ใน repo แล้ว ~/.local/bin/blm ชี้มาที่นี่ (agent ใน sandbox build เองได้) — `blm self-update` จะ git pull + build ที่นี่
+BLM_HOME ?= $(HOME)/.blm
+install: install-global
+install-global:   ## build → ~/.blm/bin/blm + symlink ~/.local/bin/blm → ~/.blm/bin/blm
+	mkdir -p $(BLM_HOME)/bin $(HOME)/.local/bin && GOCACHE=$${GOCACHE:-$${TMPDIR:-/tmp}/gocache} go build -ldflags "$(LD)" -o $(BLM_HOME)/bin/blm ./cmd/blm
+	@ln -sfn $(BLM_HOME)/bin/blm $(HOME)/.local/bin/blm 2>/dev/null || echo "symlink not writable here — run once: ln -sfn $(BLM_HOME)/bin/blm ~/.local/bin/blm"
+	@$(BLM_HOME)/bin/blm version
+	@$(HOME)/.local/bin/blm path
+	@echo "then in Claude Code:  /mcp reconnect plugin:blm:blm"
+	@printf "/mcp reconnect plugin:blm:blm" | pbcopy 2>/dev/null && echo "(copied to clipboard — just paste and Enter)" || true
+install-dev:      ## ./bin/blm + symlink ~/.local/bin/blm → ./bin/blm (dev checkout)
 	mkdir -p bin && GOCACHE=$${GOCACHE:-$${TMPDIR:-/tmp}/gocache} go build -ldflags "$(LD)" -o bin/blm ./cmd/blm
-	@if [ -L $(HOME)/.local/bin/blm ] || [ ! -e $(HOME)/.local/bin/blm ]; then \
-		mkdir -p $(HOME)/.local/bin 2>/dev/null; ln -sfn $(CURDIR)/bin/blm $(HOME)/.local/bin/blm 2>/dev/null || echo "symlink not writable here — run once: ln -sf $(CURDIR)/bin/blm ~/.local/bin/blm"; \
-	else \
-		echo "~/.local/bin/blm is a real file (global install) — switch to local once with: ln -sf $(CURDIR)/bin/blm ~/.local/bin/blm"; \
-	fi
+	@ln -sfn $(CURDIR)/bin/blm $(HOME)/.local/bin/blm 2>/dev/null || echo "symlink not writable here — run once: ln -sfn $(CURDIR)/bin/blm ~/.local/bin/blm"
 	@./bin/blm version
 	@echo "then in Claude Code:  /mcp reconnect plugin:blm:blm"
 	@printf "/mcp reconnect plugin:blm:blm" | pbcopy 2>/dev/null && echo "(copied to clipboard — just paste and Enter)" || true
-install-global:   ## แทนที่ ~/.local/bin/blm ด้วยไฟล์จริง แล้วเติม PATH
-	mkdir -p $(HOME)/.local/bin && go build -ldflags "$(LD)" -o $(HOME)/.local/bin/blm ./cmd/blm && $(HOME)/.local/bin/blm path
+install-local: install-dev
 test:
 	go vet ./... && go test ./...
 # make release                       → next patch version automatically (last remote tag +1)
 # make release RELEASE_VERSION=v2.1.0 → explicit
 release:
 	scripts/release.sh $(RELEASE_VERSION)
-.PHONY: build install install-local install-global test release
+.PHONY: build install install-local install-dev install-global test release

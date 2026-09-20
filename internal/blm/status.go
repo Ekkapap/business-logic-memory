@@ -34,23 +34,27 @@ type BackendStatus struct {
 }
 
 type Status struct {
-	Root        string           `json:"root"`
-	Backend     Backend          `json:"backend"`
-	Store       string           `json:"store"`
-	Mirror      string           `json:"mirror,omitempty"`
-	RulesFile   string           `json:"rulesFile,omitempty"`
-	Topics      int              `json:"topics"`
-	Rules       int              `json:"rules"`
-	LastReadAt  string           `json:"lastReadAt,omitempty"`
-	Notes       []Note           `json:"notes"`
-	Conflicts   []ConflictReport `json:"conflicts"`
-	NotesBytes  int64            `json:"notesBytes"`
-	History     int              `json:"history"`
-	Reports     int              `json:"reports"`
-	Tools       []ToolStatus     `json:"tools"`
-	BackendInfo BackendStatus    `json:"backendInfo"`
-	Gain        Gain             `json:"gain"`
-	ConfigFound bool             `json:"configFound"`
+	Root      string  `json:"root"`
+	Backend   Backend `json:"backend"`
+	Store     string  `json:"store"`
+	Mirror    string  `json:"mirror,omitempty"`
+	RulesFile string  `json:"rulesFile,omitempty"`
+	Topics    int     `json:"topics"`
+	Rules     int     `json:"rules"`
+	// TopicFolder โฟลเดอร์โน้ตหัวข้อ (Config.TopicFolder) · TopicNotes = หัวข้อที่แยกไฟล์แล้ว · TopicMissing = ลิงก์ในตารางที่หาไฟล์ไม่เจอ
+	TopicFolder  string           `json:"topicFolder"`
+	TopicNotes   int              `json:"topicNotes"`
+	TopicMissing []string         `json:"topicMissing,omitempty"`
+	LastReadAt   string           `json:"lastReadAt,omitempty"`
+	Notes        []Note           `json:"notes"`
+	Conflicts    []ConflictReport `json:"conflicts"`
+	NotesBytes   int64            `json:"notesBytes"`
+	History      int              `json:"history"`
+	Reports      int              `json:"reports"`
+	Tools        []ToolStatus     `json:"tools"`
+	BackendInfo  BackendStatus    `json:"backendInfo"`
+	Gain         Gain             `json:"gain"`
+	ConfigFound  bool             `json:"configFound"`
 	// readiness (เจ้าของ 2026-09-09: status ต้องบอกก่อนว่า "ทำงานได้ ติดต่อได้ พร้อมทำงาน")
 	Ready         bool     `json:"ready"`
 	Problems      []string `json:"problems"`
@@ -60,7 +64,7 @@ type Status struct {
 }
 
 func (s *Store) Status(c Config) Status {
-	st := Status{Root: s.Root, Backend: c.Backend, Store: c.Store, Mirror: c.Mirror, Notes: []Note{}, Conflicts: s.ListConflicts(), Gain: s.GainSummary(), Problems: []string{}}
+	st := Status{Root: s.Root, Backend: c.Backend, Store: c.Store, Mirror: c.Mirror, TopicFolder: c.TopicFolder(), Notes: []Note{}, Conflicts: s.ListConflicts(), Gain: s.GainSummary(), Problems: []string{}}
 	_, err := os.Stat(filepath.Join(s.Root, ConfigFile))
 	st.ConfigFound = err == nil
 	st.Binary, _ = os.Executable()
@@ -78,6 +82,16 @@ func (s *Store) Status(c Config) Status {
 	if p := s.RulesPath(); p != "" {
 		st.RulesFile = s.rel(p)
 		st.Topics, st.Rules = s.TopicCount()
+		if raw, err := os.ReadFile(p); err == nil {
+			_, _, body := splitFront(string(raw))
+			for _, t := range s.topicNotes(body) {
+				if t.Path == "" {
+					st.TopicMissing = append(st.TopicMissing, t.Name)
+				} else {
+					st.TopicNotes++
+				}
+			}
+		}
 	}
 	if raw, err := os.ReadFile(filepath.Join(s.Dir, ".rules-read.json")); err == nil {
 		st.LastReadAt = strings.Trim(strings.TrimPrefix(strings.TrimSuffix(string(raw), "}"), `{"At":`), `" `)
@@ -407,6 +421,13 @@ func RenderStatus(st Status) string {
 	b.WriteString(Section("Rules") + "\n")
 	if st.RulesFile != "" {
 		rr := [][2]string{{"File", st.RulesFile}, {"Topics", itoa(st.Topics)}, {"Rules", itoa(st.Rules)}}
+		if st.TopicNotes > 0 || len(st.TopicMissing) > 0 {
+			line := fmt.Sprintf("%d of %d topics in %s/blm-<topic>.md", st.TopicNotes, st.Topics, st.TopicFolder)
+			if len(st.TopicMissing) > 0 {
+				line += " · " + Red("missing: "+strings.Join(st.TopicMissing, ", "))
+			}
+			rr = append(rr, [2]string{"Topic notes", line})
+		}
 		if st.LastReadAt != "" {
 			rr = append(rr, [2]string{"Last read", shortTime(st.LastReadAt)})
 		}

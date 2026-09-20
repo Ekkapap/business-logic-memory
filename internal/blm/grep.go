@@ -328,47 +328,73 @@ func randomBase36() string {
 	return string(result)
 }
 
-// SaveResult saves grep result to a JSON file and returns the file path
-func (r *GrepResult) SaveResult(root string) error {
-	// ponytail: save location — use blm store if in project, else UserCacheDir/blm/grep
+// resultStoreDir — ที่เก็บไฟล์ผล grep/search: <root>/<store>/tmp ในโปรเจ็ค blm · นอกโปรเจ็ค = UserCacheDir/blm/grep (BLM_CACHE_DIR override สำหรับ test)
+// สร้างโฟลเดอร์ + .gitignore `*` ให้ (ไม่แตะ .gitignore ของแอป)
+func resultStoreDir(root string) (string, error) {
 	storeDir := filepath.Join(root, ".agentsroom", "blm", "tmp")
 	if _, err := os.Stat(filepath.Join(root, ".agentsroom", "blm")); err != nil {
-		// Not a blm project, use cache dir (check BLM_CACHE_DIR env for tests)
 		cacheDir := os.Getenv("BLM_CACHE_DIR")
 		if cacheDir == "" {
 			var err error
 			cacheDir, err = os.UserCacheDir()
 			if err != nil {
-				return fmt.Errorf("cannot determine cache directory: %v", err)
+				return "", fmt.Errorf("cannot determine cache directory: %v", err)
 			}
 		}
 		storeDir = filepath.Join(cacheDir, "blm", "grep")
 	}
-
 	if err := os.MkdirAll(storeDir, 0755); err != nil {
-		return fmt.Errorf("cannot create result directory: %v", err)
+		return "", fmt.Errorf("cannot create result directory: %v", err)
 	}
-
-	// Create .gitignore in tmp directory to self-ignore
 	gitignorePath := filepath.Join(storeDir, ".gitignore")
 	if _, err := os.Stat(gitignorePath); err != nil {
-		if err := os.WriteFile(gitignorePath, []byte("*\n"), 0644); err != nil {
-			// Ignore write errors for .gitignore; it's optional
+		_ = os.WriteFile(gitignorePath, []byte("*\n"), 0644)
+	}
+	return storeDir, nil
+}
+
+// saveResultJSON เขียน <kind>-result-<id>.json ลง resultStoreDir คืน path
+func saveResultJSON(root, kind, id string, v any) (string, error) {
+	storeDir, err := resultStoreDir(root)
+	if err != nil {
+		return "", err
+	}
+	file := filepath.Join(storeDir, fmt.Sprintf("%s-result-%s.json", kind, id))
+	data, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("cannot marshal result: %v", err)
+	}
+	if err := os.WriteFile(file, data, 0644); err != nil {
+		return "", fmt.Errorf("cannot write result file: %v", err)
+	}
+	return file, nil
+}
+
+// findResultFile หาไฟล์ผลตาม kind/id ในโปรเจ็คก่อน แล้ว cache dir
+func findResultFile(root, kind, id string) (string, error) {
+	filename := fmt.Sprintf("%s-result-%s.json", kind, id)
+	if p := filepath.Join(root, ".agentsroom", "blm", "tmp", filename); exists(p) {
+		return p, nil
+	}
+	cacheDir := os.Getenv("BLM_CACHE_DIR")
+	if cacheDir == "" {
+		cacheDir, _ = os.UserCacheDir()
+	}
+	if cacheDir != "" {
+		if p := filepath.Join(cacheDir, "blm", "grep", filename); exists(p) {
+			return p, nil
 		}
 	}
+	return "", fmt.Errorf("%s result not found: %s", kind, id)
+}
 
-	filename := fmt.Sprintf("grep-result-%s.json", r.ID)
-	filepath := filepath.Join(storeDir, filename)
-	data, err := json.MarshalIndent(r, "", "  ")
+// SaveResult saves grep result to a JSON file and returns the file path
+func (r *GrepResult) SaveResult(root string) error {
+	file, err := saveResultJSON(root, "grep", r.ID, r)
 	if err != nil {
-		return fmt.Errorf("cannot marshal result: %v", err)
+		return err
 	}
-
-	if err := os.WriteFile(filepath, data, 0644); err != nil {
-		return fmt.Errorf("cannot write result file: %v", err)
-	}
-
-	r.File = filepath
+	r.File = file
 	return nil
 }
 
@@ -380,7 +406,21 @@ func scSearch(root string, terms []string) ([]string, error) {
 		return nil, fmt.Errorf("socraticode ไม่พร้อม — ใช้การสแกนปกติ")
 	}
 
-	// ponytail: stub; semantic search via Qdrant would implement Qdrant search over embeddings
-	// TODO: query Qdrant embedding for each term, return candidate file paths
-	return nil, fmt.Errorf("socraticode semantic search stub")
+	// ถาม blm search ด้วยคำทั้งหมดรวมกันหนึ่งครั้ง เอาไฟล์ที่โผล่ (ไม่ซ้ำ) เป็น candidate ให้ scan ต่อ
+	res, err := Search(root, Load(root), SearchOpts{Query: strings.Join(terms, " "), Limit: 20, Brief: true})
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	var files []string
+	for _, h := range res.Hits {
+		if !seen[h.Path] {
+			seen[h.Path] = true
+			files = append(files, h.Path)
+		}
+	}
+	if len(files) == 0 {
+		return nil, fmt.Errorf("socraticode: no candidates for %q", strings.Join(terms, " "))
+	}
+	return files, nil
 }

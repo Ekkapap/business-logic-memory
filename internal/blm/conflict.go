@@ -63,6 +63,7 @@ func (s *Store) ListConflicts() []ConflictReport {
 		r.Chosen = chosenBlock(body)
 		out = append(out, r)
 	}
+	s.redirectToTopicNotes(out)
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Status != out[j].Status {
 			return out[i].Status == "wait"
@@ -70,6 +71,30 @@ func (s *Store) ListConflicts() []ConflictReport {
 		return out[i].ID < out[j].ID
 	})
 	return out
+}
+
+// redirectToTopicNotes — ข้อเสนอที่ยื่นไว้ตอนหัวข้อยังอยู่ใน blm.md (draft: blm) แต่หัวข้อนั้นถูกแยกเป็นโน้ต `blm-<topic>` ไปแล้ว
+// ให้ resolve/mark/list ทำงานกับโน้ตหัวข้อ ไม่ใช่งอก `# topic` ใหม่ท้ายสารบัญ (ไฟล์รายงานไม่ถูกแก้ — อ่านแล้วชี้ใหม่ทุกครั้ง)
+func (s *Store) redirectToTopicNotes(reports []ConflictReport) {
+	body := ""
+	for i := range reports {
+		c := &reports[i]
+		if c.Status != "wait" || c.Kind != "proposal" || c.Draft != RulesNote {
+			continue
+		}
+		if body == "" {
+			if p := s.RulesPath(); p != "" {
+				raw, _ := os.ReadFile(p)
+				_, _, body = splitFront(string(raw))
+			}
+			if body == "" {
+				return
+			}
+		}
+		if t, ok := s.topicNoteFor(body, c.Topic); ok {
+			c.Draft = t.Name
+		}
+	}
 }
 
 // chosenBlock ดูว่า block ไหนถูกติ๊ก (A/B) — ติ๊กทั้งคู่หรือไม่ติ๊ก = ""
@@ -407,6 +432,20 @@ func (s *Store) tagFor(reportPath string) string {
 	return "[Conflict](" + encodePath(s.rel(reportPath)) + ")"
 }
 
+// tagTopicRow ป้ายหน้าลิงก์ `[topic](…)` ในแถวตาราง Main Business (blm.md ที่เป็นสารบัญ) — ลิงก์แถวยังอ่านได้ (topicRowRe ข้ามป้าย)
+func tagTopicRow(content, topic, link string) string {
+	lines := strings.Split(content, "\n")
+	for i, l := range lines {
+		m := topicRowRe.FindStringSubmatch(l)
+		if m == nil || strings.TrimSpace(m[1]) != strings.TrimSpace(topic) {
+			continue
+		}
+		at := strings.Index(l, "["+m[1]+"]")
+		lines[i] = l[:at] + link + " " + l[at:]
+	}
+	return strings.Join(lines, "\n")
+}
+
 // tagLine ติดป้ายที่บรรทัดหัวข้อที่ตรงกับ head (เทียบหลังตัดป้ายเดิม) — ใช้กับหัวข้อในโน้ตที่ชน
 func tagLine(content, head string, ids []string) string {
 	if head == "" || len(ids) == 0 {
@@ -440,6 +479,10 @@ func (s *Store) refreshRuleTags() {
 			continue
 		}
 		link := s.tagFor(filepath.Join(s.Root, c.File))
+		if t, ok := s.topicNoteFor(content, c.Topic); ok && t.Name == c.Draft {
+			content = tagTopicRow(content, c.Topic, link) // หัวข้อที่แยกไฟล์แล้ว: ป้ายหน้าลิงก์ในตาราง Main Business
+			continue
+		}
 		if c.Draft == RulesNote {
 			if strings.Contains("\n"+content, "\n"+c.NoteHeading+"\n") || strings.Contains("\n"+content, "\n"+c.NoteHeading+" ") {
 				content = tagLine(content, c.NoteHeading, []string{link})
@@ -535,14 +578,30 @@ func (s *Store) ResolveConflicts(name string) (map[string]any, error) {
 	if len(mine) == 0 {
 		return nil, fmt.Errorf("resolve %q: no open conflicts — %s", name, s.openNotesHint())
 	}
-	mergedRaw, err := os.ReadFile(filepath.Join(s.conflictsDir(), name+".merged.md"))
+	draft, err := s.Get(name)
 	if err != nil {
-		return nil, fmt.Errorf("resolve %q: merged snapshot missing", name)
+		return nil, err
 	}
-	parts := strings.SplitN(string(mergedRaw), "\n---\n", 2)
-	cloudAt := strings.TrimPrefix(parts[0], "cloudUpdatedAt: ")
-	snapshot := parts[len(parts)-1]
-	content := snapshot
+	// ข้อเสนอ (proposal) ต่อเข้าเนื้อหาปัจจุบันของโน้ตด้วย spliceBlock — ไม่ใช้ snapshot (อาจเก่ากว่าโน้ต) ·
+	// การชนกับ cloud ยังใช้ snapshot ที่มี marker <<<<<<< #id >>>>>>> ต่อบริเวณ
+	hasClash := false
+	for _, c := range mine {
+		if c.Kind != "proposal" {
+			hasClash = true
+		}
+	}
+	cloudAt, snapshot := draft.Base, ""
+	content := conflictPrefixRe.ReplaceAllString(conflictTagRe.ReplaceAllString(draft.Content, ""), "")
+	if hasClash {
+		mergedRaw, err := os.ReadFile(filepath.Join(s.conflictsDir(), name+".merged.md"))
+		if err != nil {
+			return nil, fmt.Errorf("resolve %q: merged snapshot missing", name)
+		}
+		parts := strings.SplitN(string(mergedRaw), "\n---\n", 2)
+		cloudAt = strings.TrimPrefix(parts[0], "cloudUpdatedAt: ")
+		snapshot = parts[len(parts)-1]
+		content = snapshot
+	}
 	var done, pending, both []string
 	for _, c := range mine {
 		marker := fmt.Sprintf("<<<<<<< #%d >>>>>>>", c.ID)
@@ -551,8 +610,14 @@ func (s *Store) ResolveConflicts(name string) (map[string]any, error) {
 		switch c.Chosen {
 		case "A", "B":
 			text := blockText(blockSection(body, c.Chosen))
-			snapshot = strings.Replace(snapshot, marker, text, 1)
-			content = strings.Replace(content, marker, text, 1)
+			if c.Kind == "proposal" {
+				if c.Chosen == "A" { // B = คงของเดิม ไม่ต้องแตะ
+					content, _ = spliceBlock(content, c.Topic, c.Heading, text)
+				}
+			} else {
+				snapshot = strings.Replace(snapshot, marker, text, 1)
+				content = strings.Replace(content, marker, text, 1)
+			}
 			finished := strings.Replace(string(raw), "status: wait", "status: done\nresolved: "+time.Now().UTC().Format(time.RFC3339)+"\nchosen: "+c.Chosen, 1)
 			newName := strings.Replace(filepath.Base(c.File), "[wait] ", "[done] ", 1)
 			_ = os.WriteFile(filepath.Join(s.conflictsDir(), newName), []byte(finished), 0o644)
@@ -569,10 +634,6 @@ func (s *Store) ResolveConflicts(name string) (map[string]any, error) {
 	remaining := append(append([]string{}, pending...), both...)
 	sort.Strings(remaining)
 	content = conflictTagRe.ReplaceAllString(content, "")
-	draft, err := s.Get(name)
-	if err != nil {
-		return nil, err
-	}
 	base := draft.Base
 	if len(remaining) == 0 {
 		folder, _ := s.FindTargetFolder(draft.Target)
@@ -582,7 +643,7 @@ func (s *Store) ResolveConflicts(name string) (map[string]any, error) {
 		}
 		base = cloudAt
 		_ = os.Remove(filepath.Join(s.conflictsDir(), name+".merged.md"))
-	} else {
+	} else if hasClash {
 		_ = os.WriteFile(filepath.Join(s.conflictsDir(), name+".merged.md"), []byte("cloudUpdatedAt: "+cloudAt+"\n---\n"+snapshot), 0o644)
 	}
 	n, err := s.save(Input{Name: name, Target: draft.Target, Mode: "replace", Folder: draft.Folder, Description: draft.Description, Tags: draft.Tags, Content: content, HasContent: true, Base: base}, "merge")
@@ -629,7 +690,7 @@ func RenderConflicts(list []ConflictReport, all bool) string {
 		}
 		kind := "note " + c.Draft
 		if c.Kind == "proposal" {
-			kind = "proposal for blm.md"
+			kind = "proposal for " + c.Draft + ".md"
 		}
 		fmt.Fprintf(&b, "\n%s  %s\n    %s  ←  %s\n    %s\n", Cyan("#"+strconv.Itoa(c.ID)), state, c.Topic+" › "+c.Heading, kind, Dim(c.File))
 	}

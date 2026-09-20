@@ -20,6 +20,21 @@ if [ -z "$VERSION" ] || [ "$VERSION" = auto ]; then
   echo "release: last tag $LAST → $VERSION"
 fi
 case "$VERSION" in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo "error: version must look like v2.0.6 (got '$VERSION')"; exit 1;; esac
+# plugin เลขเดียวกับ binary (เจ้าของ 2026-09-20): plugin.json + marketplace.json แล้ว commit ก่อน tag — `claude plugin update blm@blm` ถึงจะเห็นว่าใหม่
+PV="${VERSION#v}"
+for f in plugin/.claude-plugin/plugin.json .claude-plugin/marketplace.json; do
+  [ -f "$f" ] || continue
+  if grep -q '"version"' "$f"; then
+    sed -i.bak -E "s/\"version\": *\"[^\"]*\"/\"version\": \"$PV\"/" "$f" && rm -f "$f.bak"
+  fi
+done
+if ! git diff --quiet -- plugin/.claude-plugin/plugin.json .claude-plugin/marketplace.json; then
+  git add plugin/.claude-plugin/plugin.json .claude-plugin/marketplace.json
+  git commit -q -m "chore: plugin version $PV" && echo "plugin: version → $PV (committed)"
+fi
+# marketplace ของ plugin อ่านจาก main บน GitHub → commit ต้องขึ้นก่อน tag
+git push -q origin HEAD
+git tag -a "$VERSION" -m "blm $VERSION" 2>/dev/null && git push -q origin "$VERSION" 2>/dev/null || true
 LD="-s -w -X github.com/Ekkapap/business-logic-memory/internal/blm.Version=${VERSION#v}"
 rm -rf dist && mkdir -p dist
 for t in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64 windows/amd64; do

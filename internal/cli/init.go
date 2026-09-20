@@ -419,6 +419,7 @@ func Init(o InitOptions) []string {
 		say("")
 		say("summary  all steps done")
 	}
+	_ = blm.Open(o.Root, blm.Load(o.Root)).MarkUpdate("blm init") // จุดตัดของ blm update: โค้ดที่แก้หลังจากนี้
 	return append(log, "next     open Claude Code in the project -> /reload-plugins -> /blm_init to analyse the project and draft blm.md · check: blm status")
 }
 

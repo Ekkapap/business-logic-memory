@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Backend บอกว่า "ของจริง" อยู่ไหนและ sync ทำอะไร
@@ -36,6 +37,9 @@ type Config struct {
 	PullCommand string `json:"pullCommand,omitempty"`
 	// Tools เครื่องมือข้างเคียงที่เลือกตอน init (socraticode|obsidian|graphify) — status/tools แสดงเฉพาะชุดนี้
 	Tools []string `json:"tools,omitempty"`
+	// TopicsFolder โฟลเดอร์ (นับจาก memory root) ที่โน้ตหัวข้อหลัก `blm-<topic>` ถูกวางไว้ — ตาราง Main Business ใน blm.md ลิงก์ไปที่นี่
+	// ว่าง = ค่าเริ่มต้นตาม backend (ดู TopicFolder) · override ชั่วคราวด้วย env BLM_TOPICS_FOLDER
+	TopicsFolder string `json:"topicsFolder,omitempty"`
 	// SocratiCode ที่อยู่ของ Ollama + Qdrant ที่ติดตั้งไว้แล้วบนเครื่องอื่น (`blm tools install socraticode --remote …`)
 	// nil = แบบเดิม: บริการอยู่บนเครื่องนี้ที่ 127.0.0.1 · มีค่า = install/status/graph ชี้ไปที่นั่น
 	SocratiCode *SocratiCodeConfig `json:"socraticode,omitempty"`
@@ -98,6 +102,39 @@ func Load(root string) Config {
 		return Presets[BackendAgentsRoom]
 	}
 	return Presets[BackendNone]
+}
+
+// TopicFolder — โฟลเดอร์ของโน้ตหัวข้อหลัก (concept แยก Main Business เป็นไฟล์ละหัวข้อ, เจ้าของ 2026-09-20)
+// agentsroom มีโครงโฟลเดอร์ตายตัวจึงใช้ `global/conventions/blm` ข้าง blm.md · backend อื่นไม่มีโครง → `blm` บนสุดของ memory
+// (`.claude/memory/blm/`) · ตั้งเองได้ใน blm.json (`topicsFolder`) หรือ env BLM_TOPICS_FOLDER
+func (c Config) TopicFolder() string {
+	if c.TopicsFolder != "" {
+		return strings.Trim(filepath.ToSlash(c.TopicsFolder), "/")
+	}
+	if v := os.Getenv("BLM_TOPICS_FOLDER"); v != "" {
+		return strings.Trim(filepath.ToSlash(v), "/")
+	}
+	if c.Backend == BackendAgentsRoom {
+		return "global/conventions/blm"
+	}
+	return "blm"
+}
+
+// MemoryRoot — โฟลเดอร์ที่ลิงก์ในตาราง Main Business นับจาก (relative จาก root โปรเจ็ค): mirror ของ agentsroom ·
+// env BLM_MEMORY_DIR · ไม่งั้น `<ai-dir>/memory` ข้าง store (`.claude/blm` → `.claude/memory`) — โน้ตที่ยังอยู่แค่ใน store หาเจอด้วยชื่ออยู่แล้ว
+func (c Config) MemoryRoot() string {
+	if c.Mirror != "" {
+		return c.Mirror
+	}
+	if v := os.Getenv("BLM_MEMORY_DIR"); v != "" {
+		return filepath.ToSlash(v)
+	}
+	return filepath.ToSlash(filepath.Join(filepath.Dir(c.Store), "memory"))
+}
+
+// TopicLink — path ที่ใส่ในตาราง Main Business สำหรับโน้ตหัวข้อ name (relative จาก memory root)
+func (c Config) TopicLink(name string) string {
+	return c.TopicFolder() + "/" + name + ".md"
 }
 
 // HasSync — backend นี้มีปลายทางให้ sync ไหม (none/obsidian ไม่มี → ไม่ประกาศ blm_sync เลย)
