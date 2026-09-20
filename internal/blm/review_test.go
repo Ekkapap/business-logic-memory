@@ -402,3 +402,23 @@ func TestRefreshKeepsIdsChatAndGoneRows(t *testing.T) {
 		}
 	}
 }
+
+// ทุกหัวข้อ created แล้ว → next ต้องไม่บอกให้สร้างโน้ตอีก (เจ้าของ 2026-09-20)
+func TestNextWhenEverythingCreated(t *testing.T) {
+	root := t.TempDir()
+	c := Config{Backend: BackendNone, Store: ".claude/blm"}
+	_ = os.MkdirAll(filepath.Join(root, c.Store), 0o755)
+	s := Open(root, c)
+	r, _ := s.OpenReview(NewReviewFromUpdate(&UpdateReport{Candidates: []UpdateCandidate{{Dir: "src/x"}}}))
+	r.Topics = []ReviewTopic{{ID: "n1", Status: "created", Name: ReviewPoint{Text: "X"}}}
+	_ = s.SaveReview(r)
+	rr, _ := s.ReviewRound(r.File, nil)
+	if strings.Contains(rr.Next, "every point is AGREE") || len(rr.Todo) != 0 {
+		t.Fatalf("next=%q todo=%v", rr.Next, rr.Todo)
+	}
+	r.Topics = append(r.Topics, ReviewTopic{ID: "n2", Status: "agreed", Name: ReviewPoint{Text: "Y", Action: ActionAgree}, Desc: ReviewPoint{Text: "y", Action: ActionAgree}})
+	_ = s.SaveReview(r)
+	if rr, _ = s.ReviewRound(r.File, nil); !strings.Contains(rr.Next, "every point is AGREE") {
+		t.Fatalf("agreed open topic must still say so: %q", rr.Next)
+	}
+}

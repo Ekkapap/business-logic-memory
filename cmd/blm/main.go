@@ -90,7 +90,7 @@ const updateHelp = `blm self-update — อัปเดต blm เอง (binary
 binary:  dev install (ไฟล์ที่รันอยู่ใน checkout ของ repo) → git pull --ff-only + go build ลงที่เดิม
          global install (install.sh / release) → ดาวน์โหลด blm_<os>_<arch> จาก GitHub Releases ล่าสุดแล้วแทนไฟล์
 plugin:  claude plugin marketplace update blm → claude plugin update blm@blm
-หลังอัปเดต: /mcp reconnect plugin:blm:blm (MCP ที่รันอยู่ยังใช้ binary เก่าจนกว่าจะ reconnect) — คำสั่งถูก copy ลง clipboard ให้บน mac`
+หลังอัปเดต: 1) /reload-plugins (session ยังถือ plugin เก่า: commands/skills/เวอร์ชัน) 2) /mcp reconnect plugin:blm:blm (MCP ที่รันอยู่ยังใช้ binary เก่า) — ข้อ 1 ถูก copy ลง clipboard ให้บน mac`
 
 const searchHelp = `blm search — ค้นหาความหมายผ่าน index ของ SocratiCode (ไม่ต้องผ่าน MCP ของมัน)
 
@@ -293,7 +293,7 @@ func run(cmd string, args []string) error {
 		}
 		fmt.Println(r.Terminal)
 		if r.Reconnect {
-			_ = exec.Command("sh", "-c", `printf "/mcp reconnect plugin:blm:blm" | pbcopy 2>/dev/null`).Run()
+			_ = exec.Command("sh", "-c", `printf "/reload-plugins" | pbcopy 2>/dev/null`).Run() // ขั้นแรกลง clipboard; reconnect พิมพ์ต่อเอง
 		}
 		return nil
 	case "version", "--version", "-v":

@@ -1736,8 +1736,11 @@ func (s *Store) ReviewRound(ref string, proposal any) (*ReviewRoundResult, error
 			res.Todo = append(res.Todo, fmt.Sprintf("chat on %s %q — reply with blm_update {from, proposal:{answers:[{id:%q, answer}]}} (read the files/rules behind that row first)\n%s", it.ID, it.Label, it.ID, chatThread(it.Chat, it.Summary)))
 		}
 	}
-	allAgreed := len(r.Topics) > 0
+	allAgreed, open := true, 0 // ทุกหัวข้อที่ยังไม่จบเป็น AGREE — หัวข้อ created แล้วไม่นับ และไม่มีหัวข้อค้างเลย = ไม่ใช่ agreed (เจ้าของเห็น next ผิด 2026-09-20)
 	for _, t := range r.Topics {
+		if t.Status != "created" {
+			open++
+		}
 		switch t.Status {
 		case "new":
 			res.Todo = append(res.Todo, fmt.Sprintf("topic %s %q: propose desc + subtopics from refs %v · related topics %v (read their notes first; say which one each subtopic touches) · owner note: %q", t.ID, t.Name.Text, t.Refs, t.Related, t.Note))
@@ -1767,6 +1770,9 @@ func (s *Store) ReviewRound(ref string, proposal any) (*ReviewRoundResult, error
 				}
 			}
 		}
+	}
+	if open == 0 {
+		allAgreed = false
 	}
 	switch {
 	case proposal != nil:

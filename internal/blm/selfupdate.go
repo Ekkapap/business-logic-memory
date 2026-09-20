@@ -142,7 +142,8 @@ func SelfUpdate(opts SelfUpdateOpts, out io.Writer) (*SelfUpdateResult, error) {
 	}
 
 	if r.Reconnect {
-		b.WriteString("\n" + Section("Next") + "\n  " + "/mcp reconnect plugin:blm:blm " + Dim("(the running MCP still uses the old binary until then)"))
+		// เจ้าของ 2026-09-20: /mcp reconnect รีสตาร์ตแค่ MCP server — plugin (commands/skills/เวอร์ชัน) ที่ session โหลดไว้ยังเป็นตัวเก่า ต้อง /reload-plugins ด้วย
+		b.WriteString("\n" + Section("Next") + "\n  1. /reload-plugins " + Dim("(the session still holds the old plugin: commands, skills, version)") + "\n  2. /mcp reconnect plugin:blm:blm " + Dim("(the running MCP still uses the old binary)"))
 	}
 	r.Terminal = b.String()
 	return r, nil

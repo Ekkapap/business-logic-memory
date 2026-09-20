@@ -63,7 +63,7 @@ blm self-update             # binary (global: release ล่าสุดจา�
 blm self-update --check     # ดูอย่างเดียว
 ```
 
-MCP: `blm_selfupdate {check?, binary?, plugin?}` · หลังอัปเดต `/mcp reconnect plugin:blm:blm` (MCP ที่รันอยู่ยังเป็น binary เก่าจนกว่าจะ reconnect) · เลข plugin ตรงกับ binary ตั้งแต่ release ที่ `make release` bump `plugin.json` ให้
+MCP: `blm_selfupdate {check?, binary?, plugin?}` · หลังอัปเดต `/reload-plugins` (session ยังถือ plugin เก่า: commands/skills/เวอร์ชัน) แล้ว `/mcp reconnect plugin:blm:blm` (MCP ที่รันอยู่ยังเป็น binary เก่าจนกว่าจะ reconnect) · เลข plugin ตรงกับ binary ตั้งแต่ release ที่ `make release` bump `plugin.json` ให้
 
 ## 5. ถอน
 

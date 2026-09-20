@@ -65,7 +65,7 @@ blm self-update             # binary (dev checkout → git pull + go build in pl
 blm self-update --check     # look only
 ```
 
-MCP: `blm_selfupdate {check?, binary?, plugin?}` · after update `/mcp reconnect plugin:blm:blm` (running MCP still old binary till you reconnect). · plugin version matches binary since the release where `make release` bumps `plugin.json`.
+MCP: `blm_selfupdate {check?, binary?, plugin?}` · after update `/reload-plugins` (the session still holds the old plugin: commands, skills, version) then `/mcp reconnect plugin:blm:blm` (running MCP still old binary till you reconnect). · plugin version matches binary since the release where `make release` bumps `plugin.json`.
 
 ## 5. Uninstall
 
