@@ -25,8 +25,15 @@ const usage = `blm <command> [args]
   status [--json]                 readiness, paths, rules, temp notes, tools, stats
   scan [path] [--json]            survey the repo: sizes, token estimate, sub-projects (candidate main topics)
   graph [query] [--rebuild] [--html]   built-in code graph: hubs, folder clusters, who-imports/calls-whom; --html writes <store>/graph.html
+  grep "<term1> <term2> ..." [--path <dir> | --file <file>] [--max-line N=20] [--max-result N=10] [--ext .md,.ts,...] [--sc] [--json]
+                                  search terms in files: case-insensitive substring match per term · --sc uses SocratiCode if available · --json for machine output
+  cat --grep-id <id> [--result-id <n,m>] [--context N=3] [--json]
+                                  read grep result file and display hits with context
   report [name] [--json]          latest report
-  tools <action> [--docker] [tool] status|get|install|start|stop|restart|gen-graph|help  (socraticode|obsidian|graphify)
+  tools <action> [tool] [--docker | --local | --remote <host> [--embedding-model m --embedding-dimensions n --embedding-context-length n]]
+                                  status|get|install|start|stop|restart|gen-graph|help · tools: socraticode|obsidian|graphify|tree-sitter|embedding
+                                  socraticode --local = Qdrant+Ollama on this machine (as before) · --remote <host> = use a server that already runs them,
+                                  saved to .claude/blm.json + ~/.claude/settings.json env · no flag = remote if saved, else local · "blm tools help" for examples
   sync --push|--pull [--apply] [--parallel] [--author a] [--role r] [--delete a,b]   plan, or with --apply push to AgentsRoom one by one (--parallel = all at once)
   diff <name> · merge <name> mine|cloud|content [file]   see what changed on the cloud vs your draft, then resolve
   conflicts [<id>] [-i] [--all]   waiting conflicts, one per block with its report path · <id> prints the report · -i pick → read → decide (c/i) · --all includes done
@@ -38,6 +45,59 @@ const usage = `blm <command> [args]
   guard                           PreToolUse hook: reads JSON on stdin, denies Bash writes inside the store
   mcp                             MCP server (stdio) — the Claude Code plugin runs this
   version`
+
+const grepHelp = `blm grep — ค้นหาคำศัพท์ในไฟล์
+
+รูปแบบ:
+  blm grep "<term1> <term2> ..." [--path <dir> | --file <file>] [--max-line N=20] [--max-result N=10] [--ext .ts,.md] [--sc] [--json] [--term "..."]
+
+ตัวเลือก:
+  --path <dir>      ค้นหา recursive ในโฟลเดอร์นี้ (ค่าเริ่มต้น = current directory)
+  --file <file>     ค้นหาในไฟล์เดียวเท่านั้น (ไม่ใช้กับ --path)
+  --max-line N      บรรทัดสูงสุดของ snippet window (ค่าเริ่มต้น 20; clamp ±N/2 รอบ hit)
+  --max-result N    hits สูงสุดต่อคำศัพท์ (ค่าเริ่มต้น 10)
+  --ext .ts,.md     รายการนามสกุลที่ค้นหา (ค่าเริ่มต้น .md,.txt,.ts,.tsx,.js,.jsx,.php,.sql,.sh,.go)
+  --sc              ใช้ SocratiCode semantic search ถ้าพร้อม (fallback = regular scan)
+  --imports         รวมบรรทัด import/export/require (ค่าเริ่มต้น = ข้าม)
+  --json            ผลลัพธ์ JSON แทนตารางที่อ่านง่าย
+  --term "..."      เพิ่มคำศัพท์เพิ่มเติม (ใช้ซ้ำได้)
+
+ผลลัพธ์ (ตารางเริ่มต้น):
+  term              ศัพท์ที่ค้นหา
+  path:line         ไฟล์และบรรทัดที่ตรงกับ (1-indexed)
+  snippet (start-end) ช่วงบรรทัดของ window (start และ end inclusive, 1-indexed)
+  lines             จำนวนบรรทัดของ snippet
+  text              บรรทัดที่ตรงกัน trimmed
+
+Directory ที่ skip โดยอัตโนมัติ:
+  node_modules, .git, .next, dist, build, vendor
+
+ตัวอย่าง:
+  blm grep "session login" --path src --max-line 30
+  blm grep --term "portal" --term "snapshot" --file src/lib/portal/portal-snapshot.ts --json
+  blm grep "config database" --ext .ts,.js --max-result 20 --sc`
+
+const catHelp = `blm cat — แสดงผล grep result ที่บันทึกไว้พร้อม context
+
+รูปแบบ:
+  blm cat --grep-id <id> [--result-id <n,m,p>] [--context N=3] [--json]
+
+ตัวเลือก:
+  --grep-id <id>     ID ของ grep result ที่ต้องการอ่าน (ได้จากคำสั่ง blm grep)
+  --result-id <n,m>  หมายเลข hit ที่ต้องการแสดง คั่นด้วยเครื่องหมายจุลภาค (ค่าเริ่มต้น = ทั้งหมด)
+  --context N        บรรทัดเพิ่มเติมก่อนและหลัง hit (ค่าเริ่มต้น 3)
+  --json             ผลลัพธ์ JSON แทนตารางที่อ่านง่าย
+
+ผลลัพธ์ (ตารางเริ่มต้น):
+  resultId          หมายเลข hit ในผล grep
+  path:line         ไฟล์และบรรทัด
+  context           จำนวนบรรทัด context
+  lines             บรรทัดที่อ่านได้พร้อม highlight บรรทัดที่ตรงกับ
+
+ตัวอย่าง:
+  blm cat --grep-id 7f2k9q1x --result-id 2
+  blm cat --grep-id 7f2k9q1x --result-id 1,3,5 --context 5
+  blm cat --grep-id 7f2k9q1x --json`
 
 func main() {
 	if len(os.Args) < 2 {
@@ -87,11 +147,22 @@ func run(cmd string, args []string) error {
 	}
 	// ที่เหลือคือ tool ของ MCP เรียกผ่านโค้ดชุดเดียวกัน — ผู้ใช้ได้ผลเหมือน agent โดยไม่ผ่าน AI
 	// ไม่มี .claude/blm.json ในโฟลเดอร์นี้ = รันผิดที่ (เจ้าของเจอบ่อย 2026-09-09: "backend none has no sync target" ไม่บอกอะไร)
-	if _, err := os.Stat(filepath.Join(root, blm.ConfigFile)); err != nil && cmd != "init" && cmd != "version" && cmd != "path" && cmd != "guard" && cmd != "mcp" {
+	// แต่ --help ไม่ต้องมี config เลย
+	flags, rest := splitFlags(args)
+	if flags["help"] != "" || flags["h"] != "" {
+		if cmd == "grep" {
+			fmt.Println(grepHelp)
+			return nil
+		}
+		if cmd == "cat" {
+			fmt.Println(catHelp)
+			return nil
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, blm.ConfigFile)); err != nil && cmd != "init" && cmd != "version" && cmd != "path" && cmd != "guard" && cmd != "mcp" && cmd != "grep" && cmd != "cat" {
 		return fmt.Errorf("no %s here (%s) — run blm inside the project folder, e.g. cd <project> && blm %s", blm.ConfigFile, root, cmd)
 	}
 	srv := mcp.New(root)
-	flags, rest := splitFlags(args)
 	asJSON := flags["json"] != ""
 	var (
 		res any
@@ -126,8 +197,21 @@ func run(cmd string, args []string) error {
 		if len(rest) > 1 {
 			tool = rest[1]
 		}
+		if flags["help"] != "" || flags["h"] != "" {
+			fmt.Println(blm.ToolsHelp)
+			return nil
+		}
 		// เรียกตรง (ไม่ผ่าน MCP) เพื่อ stream output ของ script ออก terminal ทันที
-		text, terr := blm.Tools(root, blm.Load(root), action, tool, flags["docker"] != "", os.Stdout)
+		opts := blm.ToolOpts{Docker: flags["docker"] != "", Local: flags["local"] != "", Remote: flags["remote"] != ""}
+		if flags["remote"] != "1" {
+			opts.RemoteHost = flags["remote"]
+		}
+		opts.SC = blm.SocratiCodeConfig{
+			OllamaURL: flags["ollama-url"], QdrantURL: flags["qdrant-url"],
+			EmbeddingModel: flags["embedding-model"], EmbeddingDimensions: flags["embedding-dimensions"], EmbeddingContextLength: flags["embedding-context-length"],
+			EmbeddingQueryPrefix: flags["embedding-query-prefix"], EmbeddingDocumentPrefix: flags["embedding-document-prefix"],
+		}
+		text, terr := blm.Tools(root, blm.Load(root), action, tool, opts, os.Stdout)
 		if terr != nil {
 			return terr
 		}
@@ -235,6 +319,61 @@ func run(cmd string, args []string) error {
 			return fmt.Errorf("blm patch <name> <find> <replace>")
 		}
 		res, err = srv.Call("blm_patch", map[string]any{"name": rest[0], "find": rest[1], "replace": rest[2]})
+	case "grep":
+		if flags["help"] != "" || flags["h"] != "" {
+			fmt.Println(grepHelp)
+			return nil
+		}
+		if len(rest) < 1 {
+			return fmt.Errorf("blm grep \"<term1> <term2> ...\" [--path <dir> | --file <file>] [--max-line N=20] [--max-result N=10] [--ext .md,.ts,...] [--sc] [--json]")
+		}
+		// Collect all terms: first from the positional arg, then from repeated --term flags
+		var allTerms []string
+		terms := strings.Fields(rest[0])
+		allTerms = append(allTerms, terms...)
+		if t := flags["term"]; t != "" {
+			allTerms = append(allTerms, t)
+		}
+		a := map[string]any{"terms": strings.Join(allTerms, " ")}
+		if f := flags["file"]; f != "" {
+			a["file"] = f
+		}
+		if p := flags["path"]; p != "" {
+			a["path"] = p
+		}
+		if ml := flags["max-line"]; ml != "" {
+			a["maxLine"] = toNum(ml, 20)
+		}
+		if mr := flags["max-result"]; mr != "" {
+			a["maxResult"] = toNum(mr, 10)
+		}
+		if e := flags["ext"]; e != "" {
+			a["ext"] = e
+		}
+		if flags["sc"] != "" {
+			a["sc"] = true
+		}
+		if flags["imports"] != "" {
+			a["imports"] = true
+		}
+		res, err = srv.Call("blm_grep", a)
+	case "cat":
+		if flags["help"] != "" || flags["h"] != "" {
+			fmt.Println(catHelp)
+			return nil
+		}
+		grepID := flags["grep-id"]
+		if grepID == "" {
+			return fmt.Errorf("blm cat --grep-id <id> [--result-id <n,m>] [--context N=3] [--json]")
+		}
+		a := map[string]any{"grepId": grepID}
+		if rid := flags["result-id"]; rid != "" {
+			a["resultId"] = rid
+		}
+		if ctx := flags["context"]; ctx != "" {
+			a["context"] = toNum(ctx, 3)
+		}
+		res, err = srv.Call("blm_cat", a)
 	default:
 		return fmt.Errorf("unknown command %q\n%s", cmd, usage)
 	}
@@ -265,7 +404,7 @@ func run(cmd string, args []string) error {
 }
 
 // renderHuman พิมพ์ผลลัพธ์ให้คนอ่าน (เจ้าของ 2026-09-09: JSON ใน CLI อ่านยาก) · --json ยังได้ของเดิม
-// รู้จักรูปที่ใช้บ่อย: แผน sync, ผล push, โน้ตหนึ่งใบ · ที่เหลือพิมพ์เป็น key: value ย่อหน้าตามชั้น ข้าม response ดิบ
+// รู้จักรูปที่ใช้บ่อย: แผน sync, ผล push, โน้ตหนึ่งใบ, blm_grep · ที่เหลือพิมพ์เป็น key: value ย่อหน้าตามชั้น ข้าม response ดิบ
 func renderHuman(res any) string {
 	var b strings.Builder
 	// ผลจาก srv.Call เป็น type ของ Go (struct/slice) — วนผ่าน JSON ให้เป็น map/[]any รูปเดียวเหมือนที่ agent เห็น
@@ -278,6 +417,86 @@ func renderHuman(res any) string {
 		out, _ := json.MarshalIndent(res, "", "  ")
 		return string(out) + "\n"
 	}
+	// blm_grep: table of hits using existing Table formatter
+	if hits, ok := m["hits"].([]any); ok {
+		if len(hits) == 0 {
+			return "no matches\n"
+		}
+		grepID := str(m["id"])
+		header := []string{"id", "term", "path:line", "snippet", "lines", "chars", "text"}
+		var rows [][]string
+		for _, h := range hits {
+			hit, _ := h.(map[string]any)
+			resultID := fmt.Sprint(int(num(hit["resultId"])))
+			term, path := str(hit["term"]), str(hit["path"])
+			start, end, lines, chars, text := int(num(hit["start"])), int(num(hit["end"])), int(num(hit["lines"])), int(num(hit["chars"])), str(hit["text"])
+			pathLine := path + ":" + fmt.Sprint(int(num(hit["line"])))
+			snippet := fmt.Sprintf("%d-%d", start, end)
+			rows = append(rows, []string{resultID, term, pathLine, snippet, fmt.Sprint(lines), fmt.Sprint(chars), text})
+		}
+		table := blm.Table(header, rows)
+		if grepID != "" {
+			if !strings.HasSuffix(table, "\n") {
+				table += "\n"
+			}
+			table += fmt.Sprintf("grep-id: %s\n", grepID)
+		}
+		return table
+	}
+
+	// blm_cat: display cat results with file content
+	if results, ok := m["results"].(map[string]any); ok {
+		if len(results) == 0 {
+			return "no results found\n"
+		}
+		header := []string{"id", "path:line", "context", "code"}
+		type resultItem struct {
+			id  int
+			res map[string]any
+		}
+		var items []resultItem
+		for _, r := range results {
+			res, _ := r.(map[string]any)
+			if rid, ok := res["resultId"].(float64); ok {
+				items = append(items, resultItem{int(rid), res})
+			}
+		}
+		// Sort by ID
+		sort.Slice(items, func(i, j int) bool { return items[i].id < items[j].id })
+
+		var rows [][]string
+		for _, item := range items {
+			res := item.res
+			rid := item.id
+			path := str(res["path"])
+			line := int(num(res["line"]))
+			ctx := int(num(res["context"]))
+			lines, _ := res["lines"].([]any)
+			hit := int(num(res["hitLine"]))
+
+			pathLine := fmt.Sprintf("%s:%d", path, line)
+			contextStr := fmt.Sprintf("±%d", ctx)
+
+			// Format code lines with hit highlighted (use actual file line numbers)
+			var codeLines []string
+			// Calculate the actual line number of the first line in the context
+			firstLineNum := line - hit + 1
+			for i, l := range lines {
+				actualLineNum := firstLineNum + i
+				lineStr := str(l)
+				if i+1 == hit {
+					codeLines = append(codeLines, fmt.Sprintf(">>> %d: %s", actualLineNum, lineStr))
+				} else {
+					codeLines = append(codeLines, fmt.Sprintf("    %d: %s", actualLineNum, lineStr))
+				}
+			}
+			code := strings.Join(codeLines, "\n")
+
+			rows = append(rows, []string{fmt.Sprint(rid), pathLine, contextStr, code})
+		}
+		return blm.Table(header, rows)
+	}
+
 	// โน้ตหนึ่งใบ (blm get): หัว + เนื้อหาเต็ม
 	if c, ok := m["content"].(string); ok && m["target"] != nil {
 		fmt.Fprintf(&b, "%s  (%s → %s · %s · base %s · updated %s)\n\n%s\n", str(m["name"]), str(m["mode"]), str(m["folder"]), map[bool]string{true: "edited", false: "synced"}[m["dirty"] == true], str(m["base"]), str(m["updatedAt"]), c)
@@ -404,6 +623,13 @@ func str(v any) string {
 	return s
 }
 
+func truncate(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max-3] + "..."
+}
+
 func num(v any) float64 {
 	switch n := v.(type) {
 	case float64:
@@ -412,6 +638,14 @@ func num(v any) float64 {
 		return float64(n)
 	}
 	return 0
+}
+
+func toNum(s string, def int) float64 {
+	var n int
+	if _, err := fmt.Sscanf(s, "%d", &n); err != nil {
+		return float64(def)
+	}
+	return float64(n)
 }
 
 func joinAny(l []any) string {
@@ -454,10 +688,13 @@ func splitFlags(args []string) (map[string]string, []string) {
 			continue
 		}
 		switch k {
-		case "json", "push", "pull", "docker", "apply", "parallel", "rebuild", "html", "i", "interactive", "all", "no-push", "confirm":
+		case "json", "push", "pull", "docker", "apply", "parallel", "rebuild", "html", "i", "interactive", "all", "no-push", "confirm", "sc", "imports", "help", "h":
+			flags[k] = "1"
+		case "local":
 			flags[k] = "1"
 		default:
-			if i+1 < len(args) {
+			// ค่าถัดไปเป็น flag อีกตัว (เช่น `--remote --embedding-model …`) = flag นี้ไม่มีค่า
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "--") {
 				flags[k] = args[i+1]
 				i++
 			} else {

@@ -53,6 +53,7 @@ Then in Claude Code: `/reload-plugins` → `/blm_init` (guided analysis: main to
 | `blm diff <name>` · `blm merge <name> mine\|cloud\|content` | `blm_diff` · `blm_merge` | — |
 | `blm conflicts [<id>] [-i] [--all]` · `blm conflict mark` · `blm resolve <note> [--keep current\|incoming] [--no-push]` | `blm_conflict {action: report\|mark, name \| content, topic, heading, reason}` · `blm_conflicts` · `blm_resolve {name, keep, push}` | `content` given = proposal for blm.md (Current = block as it is, Incoming = proposal) · resolve pushes the note unless `--no-push` |
 | `blm scan [path]` · `blm graph [query] [--rebuild]` | `blm_scan` · `blm_graph` | graph source: SocratiCode graph in Qdrant → ast-grep → regex · local work runs on all cores (`BLM_WORKERS` overrides) |
+| `blm grep "<terms>" [--path \<dir\> \| --file \<file\>] [--max-line N] [--max-result N] [--ext .ts,.md] [--sc]` | `blm_grep` | case-insensitive substring search; snippet window = empty-line boundaries or ±maxLine/2 around hit; extensions/skip-dirs configurable; parallel 4-worker pool; --sc tries SocratiCode semantic search first |
 | — | `blm` (read rules) | `/blm ["topic"]` |
 | — | `blm_stat` | — |
 | `blm guard` (hook) · `blm mcp` (server) · `blm path` · `blm init` | | `/blm_init` · `/blm:blm_help` (help + how memory and blm.md are edited) |
@@ -61,12 +62,16 @@ Then in Claude Code: `/reload-plugins` → `/blm_init` (guided analysis: main to
 
 ```sh
 blm init --agentsroom --tools socraticode            # bundle: configure + install missing tools
-blm tools install socraticode                        # later: native Qdrant + Ollama (mac: brew · linux: release binary + ollama.com)
-blm tools install --docker socraticode               # or Docker (installs the Docker CLI if missing; Windows: docker only)
+blm tools install socraticode --local                # Qdrant + Ollama + nomic-embed-text on THIS machine (mac: brew · linux: release binary + ollama.com)
+blm tools install socraticode --docker               # or Docker (installs the Docker CLI if missing; Windows: docker only)
+blm tools install socraticode --remote 192.168.1.50 --embedding-model bge-m3 --embedding-dimensions 1024 --embedding-context-length 8192
+                                                     # services on ANOTHER machine (a GPU box on your network): nothing installed here
+blm tools install socraticode --remote               # later: reuse what .claude/blm.json remembers (e.g. on a second dev machine after git pull)
 blm tools status
 ```
 
-Native mode writes `QDRANT_MODE/QDRANT_URL/OLLAMA_MODE/OLLAMA_URL=external/localhost` into `~/.claude/settings.json` `env` so SocratiCode uses your services instead of starting containers; docker mode removes them. Tools installed later are added to `tools` in `.claude/blm.json` automatically.
+`--local` writes `QDRANT_MODE/QDRANT_URL/OLLAMA_MODE/OLLAMA_URL=external/127.0.0.1` into `~/.claude/settings.json` `env` so SocratiCode uses your services instead of starting containers; docker mode removes them.
+`--remote <host>` installs nothing: blm checks that Ollama (`:11434`, with the model) and Qdrant (`:6333`) answer on that host (`--ollama-url` / `--qdrant-url` for other ports), saves the values as the `socraticode` section of `.claude/blm.json`, and writes the nine SocratiCode env vars (`OLLAMA_*`, `QDRANT_*`, `EMBEDDING_MODEL/DIMENSIONS/CONTEXT_LENGTH/QUERY_PREFIX/DOCUMENT_PREFIX`) into `~/.claude/settings.json` — reconnect the socraticode plugin afterwards. A model other than nomic gets empty prefixes unless you pass `--embedding-query-prefix` / `--embedding-document-prefix`. With no flag, `install socraticode` is `--remote` when that section exists and `--local` otherwise; `blm status` / `blm graph` / `blm grep --sc` read the same section, so they follow the server too. Works on Windows (no script involved). Tools installed later are added to `tools` in `.claude/blm.json` automatically.
 
 ## Layout
 

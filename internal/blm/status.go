@@ -152,9 +152,20 @@ func DetectTools(root string, c Config) []ToolStatus {
 		sc.Used = true
 	}
 	if sc.Installed {
-		// native ports (6333/11434) หรือคอนเทนเนอร์ที่ SocratiCode จัดการเอง (16333/11435)
-		q := httpUp("http://127.0.0.1:6333/collections") || httpUp("http://127.0.0.1:16333/collections")
-		o := httpUp("http://127.0.0.1:11434/api/tags") || httpUp("http://127.0.0.1:11435/api/tags")
+		var q, o bool
+		if r := c.SocratiCode; r != nil {
+			// remote (blm tools install socraticode --remote …): บริการอยู่เครื่องอื่น ถามที่นั่น
+			q = httpUp(r.QdrantURL + "/collections")
+			o = httpUp(r.OllamaURL + "/api/tags")
+			sc.Detail["remote"] = strings.TrimPrefix(r.OllamaURL, "http://")
+			if r.EmbeddingModel != "" {
+				sc.Detail["model"] = r.EmbeddingModel
+			}
+		} else {
+			// native ports (6333/11434) หรือคอนเทนเนอร์ที่ SocratiCode จัดการเอง (16333/11435)
+			q = httpUp("http://127.0.0.1:6333/collections") || httpUp("http://127.0.0.1:16333/collections")
+			o = httpUp("http://127.0.0.1:11434/api/tags") || httpUp("http://127.0.0.1:11435/api/tags")
+		}
 		sc.Detail["qdrant"] = upDown(q)
 		sc.Detail["ollama"] = upDown(o)
 		r := q && o

@@ -1,6 +1,7 @@
 #!/bin/sh
 # blm tools — install/start/stop neighbour tools on macOS / Linux (embedded in the blm binary, run via `blm tools …`)
-#   tools.sh <install|start|stop> <socraticode|obsidian|graphify> [--docker]
+#   tools.sh <install|start|stop> <socraticode|obsidian|graphify|tree-sitter|embedding> [--docker]
+#   socraticode here = --local (services on this machine); --remote is handled in Go (tools.go toolsSocratiCodeRemote), no script
 # Rules: check before installing (idempotent) · macOS = Homebrew · Linux = curl/tar + official installers · never sudo silently
 set -e
 ACTION="$1"; TOOL="$2"; MODE="native"
@@ -139,6 +140,8 @@ install_socraticode_native() {
   say "ENV QDRANT_URL=http://127.0.0.1:6333"
   say "ENV OLLAMA_MODE=external"
   say "ENV OLLAMA_URL=http://127.0.0.1:11434"
+  # เคยชี้ server (--remote) มาก่อน: โมเดลบนเครื่องนี้คือ nomic → ค่า EMBEDDING_* ของ server ต้องหาย ไม่งั้น SocratiCode ขอ bge-m3 จาก ollama ที่ไม่มี
+  say "ENV -EMBEDDING_MODEL -EMBEDDING_DIMENSIONS -EMBEDDING_CONTEXT_LENGTH -EMBEDDING_QUERY_PREFIX -EMBEDDING_DOCUMENT_PREFIX"
   say "socraticode: native stack ready (qdrant :6333 · ollama :11434)"
 }
 

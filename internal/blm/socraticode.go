@@ -22,9 +22,13 @@ import (
 //                            ใน collection `socraticode_metadata` point id = uuid จาก sha256("codegraph_<projectId>")[:32]
 //   symbol + call ต่อไฟล์   = collection `<projectId>_symgraph_file` 1 point/ไฟล์ payload {file, language, symbols[], outgoingCalls[]}
 //                            calleeCandidates 1 ตัว = resolve แน่ → edge call ไปไฟล์ของ candidate (id = "<file>::<name>#<line>")
-// ทั้งหมดผ่าน REST ของ Qdrant (QDRANT_URL หรือ 127.0.0.1:6333 / 16333) ไม่ต้องมี MCP ของ SocratiCode
+// ทั้งหมดผ่าน REST ของ Qdrant (blm.json socraticode.qdrantUrl · QDRANT_URL · 127.0.0.1:6333 / 16333) ไม่ต้องมี MCP ของ SocratiCode
 
-func qdrantBase() string {
+// ลำดับ: .claude/blm.json (socraticode --remote) → env QDRANT_URL → ~/.claude/settings.json env → พอร์ต local ที่ตอบ
+func qdrantBase(root string) string {
+	if r := Load(root).SocratiCode; r != nil && r.QdrantURL != "" {
+		return strings.TrimRight(r.QdrantURL, "/")
+	}
 	if u := os.Getenv("QDRANT_URL"); u != "" {
 		return strings.TrimRight(u, "/")
 	}
@@ -114,7 +118,7 @@ type scFilePoint struct {
 
 // FetchSocraticodeGraph ดึงกราฟจาก Qdrant · คืน error เมื่อไม่มี Qdrant/ไม่มีกราฟของโปรเจ็คนี้ (caller ถอยไป ast-grep)
 func FetchSocraticodeGraph(root string) (Graph, error) {
-	base := qdrantBase()
+	base := qdrantBase(root)
 	if base == "" {
 		return Graph{}, fmt.Errorf("qdrant not reachable")
 	}

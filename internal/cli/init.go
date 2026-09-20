@@ -276,7 +276,7 @@ func Init(o InitOptions) []string {
 		}
 		imp := toolImpact[t]
 		step(t, imp[0], imp[1], func() (string, error) {
-			out, err := blm.Tools(o.Root, c, "install", t, o.Docker, o.Out)
+			out, err := blm.Tools(o.Root, c, "install", t, blm.ToolOpts{Docker: o.Docker}, o.Out)
 			return strings.TrimSpace(out), err
 		})
 	}

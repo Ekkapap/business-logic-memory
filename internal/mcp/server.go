@@ -69,6 +69,23 @@ func tools(c blm.Config) []tool {
 			obj(map[string]any{"name": noteProps["name"], "keep": enum("", "mine", "cloud", "content"), "content": str("merged body when keep=content")}, "name", "keep")},
 		{"blm_graph", "Repo graph, cached in <store>/graph.json. Source order: SocratiCode's graph in Qdrant when the project is indexed (resolved imports + calls, all languages) → tree-sitter (ast-grep, `blm tools install tree-sitter`) from real AST: imports, definitions and cross-file calls; without it a coarse regex fallback (imports only, marked engine=regex). hubs = most imported/called files, clusters per folder with top symbols, query = find files/symbols matching a word with neighbours (who imports/calls whom). Meaning is not in the graph: install `embedding` (Ollama) or infer it yourself.",
 			obj(map[string]any{"query": str("word to look up (symbol or path); omit = summary"), "path": str("sub path to build from (omit = whole project)"), "rebuild": map[string]any{"type": "boolean", "description": "rebuild graph.json even if cached"}, "html": map[string]any{"type": "boolean", "description": "also write <store>/graph.html — an interactive force graph to open in a browser"}, "limit": map[string]any{"type": "number"}})},
+		{"blm_grep", "ค้นหาคำศัพท์ในไฟล์: การจับคู่สตริงย่อย case-insensitive ต่อคำ คืน hit array พร้อม path, บรรทัด, snippet start/end, text. Scope: file (ไฟล์เดียว) หรือ path (recursive directory, ค่าเริ่มต้น = current). Window: walk ไปหา empty line ก่อนหน้า/ถัดไป (หรือ boundary); ถ้า window > maxLine ให้ clamp เป็น ±maxLine/2 รอบ hit line. Extensions: allowlist .md .txt .ts .tsx .js .jsx .php .sql .sh .go; ext override ด้วย comma-separated extensions. Concurrency: parallel term × file scan ด้วย 4 workers. sc: ใช้ SocratiCode semantic search สำหรับ candidate files (fallback ไป regular scan ถ้า unreachable). imports: รวมบรรทัด import/export/require เป็นค่าเริ่มต้นปิด (default false)",
+			obj(map[string]any{
+				"terms":     str("space-separated search terms (required)"),
+				"file":      str("single file path (omit = scan directory)"),
+				"path":      str("directory to scan recursively (default = current directory)"),
+				"maxLine":   num("max lines per snippet (default 20)"),
+				"maxResult": num("max hits per term (default 10)"),
+				"ext":       str("comma-separated extensions to include (default .md,.txt,.ts,.tsx,.js,.jsx,.php,.sql,.sh,.go)"),
+				"sc":        boolean("use SocratiCode semantic search for candidates (default false)"),
+				"imports":   boolean("include import/export/require lines (default false)"),
+			}, "terms")},
+		{"blm_cat", "แสดงผล grep result ที่บันทึกไว้ (จากคำสั่ง blm_grep): อ่านไฟล์ result JSON, ดึงหา hits ตามเลขลำดับที่ต้องการ, ส่วนเนื้อหาไฟล์ต้นฉบับพร้อม context lines ก่อนและหลัง hit. resultId: comma-separated list; ค่าเริ่มต้น = ทั้งหมด. context: บรรทัดเพิ่มเติมข้างหน้าและข้างหลัง hit (ค่าเริ่มต้น 3). ส่วนกลับ: hits array พร้อม path, line, resultId, context, lines (file lines พร้อม position ของ hit)",
+			obj(map[string]any{
+				"grepId":   str("ID ของ grep result (required)"),
+				"resultId": str("comma-separated hit IDs (default = all)"),
+				"context":  num("lines before/after hit (default 3)"),
+			}, "grepId")},
 		{"blm_conflict", "Two actions. action:report (default) writes a report the OWNER decides on (Current/Incoming; tick, blm conflicts -i, or blm resolve --keep) and touches nothing else. (1) Real clash: pass name (the note) — one report per overlapping region. (2) Proposal to change blm.md (during /blm_init or when a rule should change): pass content (the whole proposed block for topic › heading; existing or new subtopic), name may be omitted. action:mark puts [Conflict](<report>) marks into blm.md (memory line / heading of that topic) and into the clashing notes for every waiting report — the only step that edits files; resolve removes them. Write reason/content in the owner's language (Thai here).",
 			obj(map[string]any{"name": noteProps["name"], "topic": str("main topic (e.g. Authentication)"), "heading": str("subtopic heading exactly as in blm.md (e.g. LINE Login (delegated MFA))"), "reason": str("why you could not decide — what each side claims"), "content": str("proposal mode: the whole proposed block (rules, memory:/code:/verify:/updated_at lines; leading '## heading' optional)"), "action": enum("report (default) = write the report only · mark = tag blm.md and the notes for all waiting reports", "report", "mark")})},
 		{"blm_restore", "Restore a note in blm/ from a file in history/ (every save/update/patch/delete snapshots the previous version there). Without history: list the history files of that note, newest first. The current version is snapshotted before it is overwritten.",
@@ -90,7 +107,15 @@ func tools(c blm.Config) []tool {
 		{"blm_stat", "Record one stat event (summary in blm_status): lookup = owner could not remember, agent searched the rules {query} · override = owner changed a rule after confirming {topic, note?} · fixed = how many NOT PASSED of the last check the agent corrected on its own from the rules file {count}",
 			obj(map[string]any{"event": enum("", "lookup", "override", "fixed"), "query": str(""), "topic": str(""), "note": str(""), "count": map[string]any{"type": "number"}}, "event")},
 		{"blm_tools", "Manage neighbour tools (socraticode | obsidian | graphify): status · get · install · start · stop · restart · gen-graph · help — acts when it knows the command, otherwise returns the command for the user to run",
-			obj(map[string]any{"action": enum("", "status", "get", "install", "start", "stop", "restart", "gen-graph", "help"), "tool": enum("", "socraticode", "obsidian", "graphify"), "docker": map[string]any{"type": "boolean", "description": "socraticode: run Qdrant + Ollama in Docker instead of native (required on Windows)"}}, "action")},
+			obj(map[string]any{
+				"action": enum("", "status", "get", "install", "start", "stop", "restart", "gen-graph", "help"), "tool": enum("", "socraticode", "obsidian", "graphify", "tree-sitter", "embedding"),
+				"docker":    map[string]any{"type": "boolean", "description": "socraticode/embedding: Qdrant + Ollama in Docker instead of native"},
+				"local":     map[string]any{"type": "boolean", "description": "socraticode: install Qdrant + Ollama on THIS machine (the original mode)"},
+				"remote":    map[string]any{"type": "string", "description": "socraticode: host of a server that already runs Ollama :11434 + Qdrant :6333 (nothing installed here; saved to .claude/blm.json; env written to ~/.claude/settings.json) · \"config\" = reuse the saved values"},
+				"ollamaUrl": map[string]any{"type": "string", "description": "remote: full Ollama URL when the port is not 11434"}, "qdrantUrl": map[string]any{"type": "string", "description": "remote: full Qdrant URL when the port is not 6333"},
+				"embeddingModel": map[string]any{"type": "string", "description": "remote: Ollama embedding model (e.g. bge-m3); needs embeddingDimensions + embeddingContextLength"}, "embeddingDimensions": map[string]any{"type": "string"}, "embeddingContextLength": map[string]any{"type": "string"},
+				"embeddingQueryPrefix": map[string]any{"type": "string", "description": "remote: task prefix for queries (empty for bge-m3; nomic = \"search_query: \")"}, "embeddingDocumentPrefix": map[string]any{"type": "string"},
+			}, "action")},
 		{"blm_sync", "push: sync temp notes into the backend. apply=true (preferred): blm spawns the AgentsRoom MCP itself, runs memory_save one note at a time (parallel:true to send all at once once the AgentsRoom build supports it), verifies with memory_list once, archives only what is verified and returns ok/verified/error per note — no retries — no note content passes through your context. Without apply: returns the plan for you to execute by hand. pull: refresh the mirror from the backend, then update clean local copies in the store (local edits are never overwritten; dirty + cloud changed = listed as conflict)",
 			obj(map[string]any{
 				"direction": enum("push (default) | pull", "push", "pull"),
@@ -213,6 +238,33 @@ func (s *Server) Call(name string, a map[string]any) (any, error) {
 			res["hint"] = "coarse regex mode — no tree-sitter on this machine. Ask the owner: `blm tools install tree-sitter` (ast-grep) for a real AST + call graph; for meaning either `blm tools install embedding` (Ollama, native or --docker) or infer meaning yourself from the code you read"
 		}
 		return res, nil
+	case "blm_grep":
+		terms := strings.Fields(getStr(a, "terms"))
+		maxLine := 20
+		maxResult := 10
+		if ml, ok := a["maxLine"].(float64); ok {
+			maxLine = int(ml)
+		}
+		if mr, ok := a["maxResult"].(float64); ok {
+			maxResult = int(mr)
+		}
+		sc, _ := a["sc"].(bool)
+		imports, _ := a["imports"].(bool)
+		return blm.Grep(s.root, terms, getStr(a, "file"), getStr(a, "path"), maxLine, maxResult, getStr(a, "ext"), sc, imports)
+	case "blm_cat":
+		grepID := getStr(a, "grepId")
+		if grepID == "" {
+			return nil, fmt.Errorf("grepId required")
+		}
+		context := 3
+		if ctx, ok := a["context"].(float64); ok {
+			context = int(ctx)
+		}
+		resultIDs, err := blm.ParseResultIDs(getStr(a, "resultId"))
+		if err != nil {
+			return nil, err
+		}
+		return blm.Cat(s.root, grepID, resultIDs, context)
 	case "blm_conflict":
 		if act, _ := a["action"].(string); act == "mark" {
 			r := s.store.Mark()
@@ -329,8 +381,17 @@ func (s *Server) Call(name string, a map[string]any) (any, error) {
 		return map[string]any{"ok": true, "recorded": s.store.RecordStat(ev)}, nil
 	case "blm_tools":
 		docker, _ := a["docker"].(bool)
+		local, _ := a["local"].(bool)
+		opts := blm.ToolOpts{Docker: docker, Local: local, Remote: getStr(a, "remote") != "", RemoteHost: getStr(a, "remote"), SC: blm.SocratiCodeConfig{
+			OllamaURL: getStr(a, "ollamaUrl"), QdrantURL: getStr(a, "qdrantUrl"),
+			EmbeddingModel: getStr(a, "embeddingModel"), EmbeddingDimensions: getStr(a, "embeddingDimensions"), EmbeddingContextLength: getStr(a, "embeddingContextLength"),
+			EmbeddingQueryPrefix: getStr(a, "embeddingQueryPrefix"), EmbeddingDocumentPrefix: getStr(a, "embeddingDocumentPrefix"),
+		}}
+		if opts.RemoteHost == "config" {
+			opts.RemoteHost = ""
+		}
 		var log strings.Builder
-		out, err := blm.Tools(s.root, s.cfg, getStr(a, "action"), getStr(a, "tool"), docker, &log)
+		out, err := blm.Tools(s.root, s.cfg, getStr(a, "action"), getStr(a, "tool"), opts, &log)
 		if log.Len() > 0 {
 			out = strings.TrimRight(log.String(), "\n") + "\n" + out
 		}
