@@ -52,6 +52,7 @@ const usage = `blm <command> [args]
   path                            add the blm folder to the user's PATH (prints the command if it cannot)
   update ["<topic>"] [--limit N=10] [--html [--from <json>]] [--json] · update draft ["<topic>"]   what blm.md covers and what it does not: topics + dirs their code: lines cover · graph clusters no rule refers to ·
                                   files changed since the newest rule · with a topic: blm search hits to start reading — the report /blm_update starts from (no LLM)
+  release [vX.Y.Z]                release from the dev checkout (scripts/release.sh: version → commit → tag → build → GitHub release) then self-update — runnable from any folder
   self-update [--check] [--binary | --plugin] [--json]   update blm itself (also: blm --self-update): binary (dev checkout → git pull + go build · global → latest GitHub release) + plugin (claude plugin update blm@blm)
   guard                           PreToolUse hook: reads JSON on stdin, denies Bash writes inside the store
   hook session-start|prompt|post-edit|grep-nudge   one Claude Code hook for everything (JSON on stdin → additionalContext): core business logic of blm.md
@@ -301,6 +302,20 @@ func run(cmd string, args []string) error {
 			_ = exec.Command("sh", "-c", `printf "/reload-plugins" | pbcopy 2>/dev/null`).Run() // ขั้นแรกลง clipboard; reconnect พิมพ์ต่อเอง
 		}
 		return nil
+	case "release":
+		// blm release [vX.Y.Z] — รันได้จากทุกโฟลเดอร์ (เจ้าของ 2026-09-20): scripts/release.sh ใน dev checkout (หา repo จาก symlink ของ binary
+		// เหมือน self-update) แล้ว self-update ต่อให้เลย · เหลือ /reload-plugins + /mcp reconnect ที่ต้องกดใน session เอง
+		repo := blm.DevCheckout()
+		if repo == "" {
+			return fmt.Errorf("blm release needs a dev checkout (binary must live inside the blm repo — see make install-dev)")
+		}
+		sh := exec.Command("sh", append([]string{filepath.Join(repo, "scripts", "release.sh")}, args...)...)
+		sh.Dir, sh.Stdin, sh.Stdout, sh.Stderr = repo, os.Stdin, os.Stdout, os.Stderr
+		if err := sh.Run(); err != nil {
+			return fmt.Errorf("release.sh: %w", err)
+		}
+		fmt.Println()
+		return run("self-update", nil)
 	case "version", "--version", "-v":
 		fmt.Println("blm", blm.Version)
 		return nil

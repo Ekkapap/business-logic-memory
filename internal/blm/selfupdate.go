@@ -149,6 +149,9 @@ func SelfUpdate(opts SelfUpdateOpts, out io.Writer) (*SelfUpdateResult, error) {
 	return r, nil
 }
 
+// DevCheckout — repo dir ของ blm ถ้า binary ที่รันอยู่ใน checkout (dev install) · "" = global install
+func DevCheckout() string { _, repo := selfLocation(); return repo }
+
 // selfLocation — ไฟล์จริงของ binary ที่รัน และ repo dir ถ้ามันอยู่ใน checkout ของ blm (dev install)
 func selfLocation() (exe, repoDir string) {
 	exe, err := os.Executable()
