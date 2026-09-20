@@ -3,6 +3,8 @@ name: blm
 description: business-logic-memory — how an agent records project knowledge during a session (store in .agentsroom/blm/ is the working copy; blm.md = the one business-logic rules file; edited only through blm_create/append/patch; proposals for blm.md go through blm_conflict for the owner to decide; synced once when the owner says "update memory"), how it finds code with blm_search over the SocratiCode index (Thai or English) and reads the origin column (code / both ✓ / comment ⚠) before trusting a hit, and how blm/SocratiCode/Ollama/Qdrant are installed, wired and updated. Use whenever you learn something worth remembering mid-task, are about to decide on business logic, the owner points at something in blm.md, you need to know where or how something in the code works, or you touch blm/socraticode setup.
 ---
 
+ไทย · **[English](SKILL-EN.md)**
+
 # blm — local memory ที่ทำงานจริง · กฎธุรกิจอยู่ไฟล์เดียว · ค้นโค้ดด้วยความหมาย · เจ้าของตัดสิน
 
 เครื่องมือทั้งหมดมาจาก binary `blm` ตัวเดียว: agent เรียกผ่าน MCP (`blm_*`) เจ้าของเรียกตรงในเทอร์มินัล (`blm status`, ต้องอยู่ในโฟลเดอร์โปรเจ็ค) โค้ดชุดเดียวกัน · `/blm:blm_help` = `blm --help` + สรุปการใช้งาน

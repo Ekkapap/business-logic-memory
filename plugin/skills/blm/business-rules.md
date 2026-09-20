@@ -1,3 +1,5 @@
+ไทย · **[English](business-rules-EN.md)**
+
 # กฎธุรกิจ — blm.md · ข้อเสนอและ conflict · รายงาน /blm · สถิติ
 
 ## blm.md คืออะไร

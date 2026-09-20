@@ -1,3 +1,5 @@
+ไทย · **[English](install-EN.md)**
+
 # ติดตั้ง blm — binary + plugin · อัปเดต · ที่อยู่ไฟล์
 
 blm มีสองส่วนที่ต้องมีคู่กัน: **binary `blm`** บน PATH (CLI + MCP server `blm mcp`) และ **plugin `blm@blm`** ใน Claude Code (skill + slash commands + `.mcp.json` ที่ชี้ `blm mcp`) — plugin ไม่มี binary จะเริ่ม MCP ไม่ได้

@@ -1,0 +1,9 @@
+# Explore project — scan · graph · grep/cat · tools
+
+**[ไทย](project-explore.md)** · English
+
+- `blm_scan {path?}` size/token/sub-projects (candidate major topics at `/blm_init`) and ignores across 3 files (`.gitignore` `.socraticodeignore` `.ignorememory`).
+- `blm_graph {query?, rebuild?, html?}` graph of imports + symbols + calls. Data sources in order: SocratiCode in Qdrant (`<projectId>_symgraph_file`, `socraticode_metadata`) → ast-grep (tree-sitter) → regex. See `engine` label in results. · markdown passes through for doc hubs. · local job parallel across cores (`BLM_WORKERS` override). · cache in `<store>/graph.json`. · `html:true` write `graph.html` open in browser.
+- `blm_grep {terms, file?, path?, maxLine?, maxResult?, ext?, sc?, imports?}` search exact words case-insensitive multiple terms, snippet cut by blank lines. · import/export lines cut out by default (`imports:true` bring back). · `sc:true` ask `blm_search` to find candidate files first. · Result saved to `<store>/tmp/grep-result-<id>.json` then `blm_cat {grepId, resultId?, context?}` open context around hit with real line numbers — use when you know **the word** to search for. If you only know **the meaning**, use [blm-search-EN.md](blm-search-EN.md).
+- `blm_tools {action, tool, …}` tools nearby `socraticode | obsidian | graphify | tree-sitter | embedding`: `status · get · install · update · start · stop · restart · gen-graph` — details on socraticode in [socraticode-remote-EN.md](socraticode-remote-EN.md). · tree-sitter = ast-grep gives `blm_graph` real AST when socraticode isn't there. · If a tool returns a method/command for the user to run, print it. Don't run it without asking.
+- `blm_status` / `blm status` everything on one page: READY/NOT READY on first line, paths, rules, notes edited waiting to push, conflicts, tools, statistics, Workers.

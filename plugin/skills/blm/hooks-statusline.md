@@ -1,3 +1,5 @@
+ไทย · **[English](hooks-statusline-EN.md)**
+
 # hooks + statusline ของ Claude Code สำหรับ SocratiCode index (blm ถือให้)
 
 ทั้งหมดเป็นกลไกปกติของ Claude Code: hook รับ JSON ทาง stdin แล้วฉีด context กลับด้วย `{"hookSpecificOutput":{"hookEventName":…,"additionalContext":…}}` · statusline รับ JSON แล้วพิมพ์ข้อความ · blm ทำให้ในคำสั่งเดียว (`blm hook …`, `blm statusline`) ไม่มี script ข้างนอก

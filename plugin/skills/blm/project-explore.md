@@ -1,3 +1,5 @@
+ไทย · **[English](project-explore-EN.md)**
+
 # สำรวจโปรเจ็ค — scan · graph · grep/cat · tools
 
 - `blm_scan {path?}` ขนาด/token/โปรเจ็คย่อย (candidate หัวข้อหลักตอน /blm_init) และ ignore รวม 3 ไฟล์ (`.gitignore` `.socraticodeignore` `.ignorememory`)

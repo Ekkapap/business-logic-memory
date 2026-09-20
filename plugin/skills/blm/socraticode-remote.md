@@ -1,3 +1,5 @@
+ไทย · **[English](socraticode-remote-EN.md)**
+
 # SocratiCode + LLM + Qdrant — ติดตั้งแบบ local / remote และต่อสาย Claude Code
 
 SocratiCode = plugin ของ Claude Code (`giancarloerra/socraticode`) ที่ index โค้ดเป็น chunk ตามขอบ function (tree-sitter ผ่าน ast-grep) → embed ด้วย **Ollama** → เก็บใน **Qdrant** และสร้าง symbol/call graph · การค้น**ต้องมีทั้งสองบริการออนไลน์** (คำถามถูก embed ก่อนเสมอ ไม่มี keyword-only fallback) · blm ใช้ index นี้ผ่าน `blm_search` / `blm tools status` / `blm graph` โดยไม่ผ่าน MCP ของมัน

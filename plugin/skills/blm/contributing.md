@@ -1,3 +1,5 @@
+ไทย · **[English](contributing-EN.md)**
+
 # พัฒนา blm ต่อ — fork · build · test · ส่งกลับ (pull request)
 
 repo: https://github.com/Ekkapap/business-logic-memory (public, Go ล้วน ไม่มี dependency นอก stdlib)
