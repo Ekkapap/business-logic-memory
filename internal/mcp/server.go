@@ -63,6 +63,9 @@ func tools(c blm.Config) []tool {
 		{"blm_patch", "Find/replace inside a note: `find` must match exactly once. If the note is not in blm/ yet but exists on the backend, it is checked out first — use this instead of memory_get + memory_save to change a few lines. Returns metadata only.", obj(map[string]any{"name": noteProps["name"], "find": str(""), "replace": str("")}, "name", "find", "replace")},
 		{"blm_replace", "Overwrite a WHOLE note in blm/ on purpose (it must exist; the previous version goes to history/). If the new content differs a lot from the current one (size or lines > 30%), nothing is written and you get needsConfirm with the numbers and the first lines that would disappear — call again with confirm:true only if that is intended. Rarely needed — prefer blm_patch/blm_append.", obj(withConfirm(noteProps), "name", "content")},
 		{"blm_delete", "Delete a temp note (the previous version is snapshotted to history/)", obj(map[string]any{"name": noteProps["name"]}, "name")},
+		// blm_scan หลุดไปกับ refactor 42aafa0 (2026-09-09) ทั้งที่ /blm_init ขั้น 1 และ blm scan ยังเรียก — ใส่กลับ 2026-09-20
+		{"blm_scan", "Survey the repo before /blm_init: file/byte/token totals with .gitignore + .socraticodeignore + .ignorememory applied, per-top-dir stats, memory note count, and SUB-PROJECTS (folders with their own go.mod/package.json/PLANNING.md/… — propose each as its own main topic). Generic: no project names hard-coded. Warns when the whole tree exceeds the token budget.",
+			obj(map[string]any{"path": str("sub path to survey (omit = whole project)"), "tokenWarn": map[string]any{"type": "number", "description": "warn above this many tokens (default 200000)"}})},
 		{"blm_diff", "Compare a replace-draft with the cloud note it was taken from: did the cloud change since (cloudChanged), which lines changed on each side (diffCloud / diffMine, a few lines each), and whether the regions overlap. Only the changed lines leave blm — never whole notes. Run before pushing a draft that has waited a while, or when blm_sync reports a conflict.",
 			obj(map[string]any{"name": noteProps["name"]}, "name")},
 		{"blm_merge", "Resolve a conflicting draft after blm_diff. keep=mine: re-apply the draft's changes on top of the current cloud version (3-way, refuses on overlapping regions) · keep=cloud: drop the draft (snapshot to history) · keep=content: store the text you merged by hand. Owner decides; the replaced version always lands in history/.",
@@ -203,6 +206,7 @@ var toolHints = map[string][2]string{ // name → {related, next}
 	"blm_search":    {"blm_grep, blm_cat, blm_graph", "read hits → blm_search {get, ids} · exact term → blm_grep · line numbers → blm_review patch {line, endLine}"},
 	"blm_grep":      {"blm_cat, blm_search", "context of a hit → blm_cat {grepId, resultId} · change those lines → blm_review patch {path, line, endLine, content}"},
 	"blm_cat":       {"blm_grep, blm_review", "edit the lines you just read → blm_review patch (store files) or Edit (code)"},
+	"blm_scan":      {"blm_graph, blm_search", "sub-project → its own main topic · dig a folder → blm_graph {query} / blm_search {query}"},
 	"blm_graph":     {"blm_search, blm_update", "read a symbol → blm_search {query} · new topic from a cluster → blm_update {html:true}"},
 	"blm_update":    {"blm_review, blm_create, blm_append", "todo → answer with blm_update {from, proposal} · a node of the file → blm_review get {select} · then blm_update {from, wait:true}"},
 	"blm_review":    {"blm_update, blm_grep", "change one node → set {select, value} · lines → patch · delete needs the owner's confirm"},
@@ -363,6 +367,10 @@ func (s *Server) Call(name string, a map[string]any) (any, error) {
 		return out, nil
 	case "blm_delete":
 		return map[string]any{"ok": true}, s.store.Delete(in.Name)
+	case "blm_scan":
+		tw, _ := a["tokenWarn"].(float64)
+		r := blm.ScanRepo(s.root, getStr(a, "path"), int64(tw))
+		return map[string]any{"scan": r, "terminal": blm.RenderScan(r)}, nil
 	case "blm_diff":
 		return s.store.Diff(in.Name)
 	case "blm_merge":
